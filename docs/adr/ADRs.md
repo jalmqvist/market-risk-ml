@@ -31,3 +31,17 @@ use OANDA's default daily candles unless proven equivalent.
 
 # ADR-005: Hosting, secrets, backups
 Status: PROPOSED. See ARCHITECTURE.md section 12.
+
+# ADR-006: State resolution and recommendation semantics
+Status: ACCEPTED (2026-10-08)
+Finding: In per-state MPML bundles, baseline PhaseAware rows are identical
+across states and to the default baseline; only the selector row varies.
+state_id labels the DL artifact loaded, not a conditioning variable.
+Decision:
+- v0 does not resolve live state to choose a strategy.
+- Strategy per pair is a fixed, versioned config (frozen before first trade).
+- Bundles supply provenance and candidate evidence only.
+- Current state may be logged as shadow data.
+- State-conditioned selection requires new MPML evidence (G6) and, for the
+  selector, live MSML inference. Both are out of v0 scope.
+  Supersedes: ADR-002/003 for v0 (both deferred to the model-serving stage).
