@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
-from typing import Iterable
+from datetime import UTC, date, datetime, time, timedelta
 
 
 class BarGapError(ValueError):
@@ -20,6 +21,7 @@ class H1Bar:
     low: float
     close: float
     volume: float = 0.0
+    complete: bool = True
 
 
 @dataclass(frozen=True)
@@ -50,21 +52,40 @@ def build_d1_bars(
     for bar in bars:
         if bar.timestamp.tzinfo is None or bar.timestamp.utcoffset() is None:
             raise ValueError("H1 timestamps must be timezone-aware")
-        timestamp = bar.timestamp.astimezone(timezone.utc)
+        timestamp = bar.timestamp.astimezone(UTC)
         if timestamp.minute or timestamp.second or timestamp.microsecond:
             raise ValueError("H1 timestamps must align to the hour")
+        prices = (bar.open, bar.high, bar.low, bar.close, bar.volume)
+        if (
+            not all(math.isfinite(value) for value in prices)
+            or bar.volume < 0
+            or bar.low > min(bar.open, bar.close)
+            or bar.high < max(bar.open, bar.close)
+            or bar.low > bar.high
+        ):
+            raise ValueError("H1 candle values are invalid")
         grouped[(timestamp + offset).date()].append(
-            H1Bar(timestamp, bar.open, bar.high, bar.low, bar.close, bar.volume)
+            H1Bar(
+                timestamp,
+                bar.open,
+                bar.high,
+                bar.low,
+                bar.close,
+                bar.volume,
+                bar.complete,
+            )
         )
 
     daily: list[D1Bar] = []
     for day in sorted(grouped):
         day_bars = sorted(grouped[day], key=lambda bar: bar.timestamp)
+        if any(not bar.complete for bar in day_bars):
+            raise BarGapError(f"Incomplete H1 candle for {day}")
         if require_complete_days:
-            expected_start = datetime.combine(
-                day, time.min, tzinfo=timezone.utc
-            ) - offset
-            expected = tuple(expected_start + timedelta(hours=index) for index in range(24))
+            expected_start = datetime.combine(day, time.min, tzinfo=UTC) - offset
+            expected = tuple(
+                expected_start + timedelta(hours=index) for index in range(24)
+            )
             actual = tuple(bar.timestamp for bar in day_bars)
             if actual != expected:
                 raise BarGapError(
@@ -74,7 +95,7 @@ def build_d1_bars(
             raise BarGapError(f"Duplicate H1 timestamp for {day}")
         daily.append(
             D1Bar(
-                timestamp=datetime.combine(day, time.min, tzinfo=timezone.utc),
+                timestamp=datetime.combine(day, time.min, tzinfo=UTC),
                 open=day_bars[0].open,
                 high=max(bar.high for bar in day_bars),
                 low=min(bar.low for bar in day_bars),

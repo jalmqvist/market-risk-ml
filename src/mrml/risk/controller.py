@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 
@@ -15,6 +16,16 @@ class RiskLimits:
     max_daily_loss_pct: float = 0.03
 
     def __post_init__(self) -> None:
+        if not all(
+            math.isfinite(value)
+            for value in (
+                self.risk_per_trade,
+                self.max_currency_exposure,
+                self.max_drawdown_pct,
+                self.max_daily_loss_pct,
+            )
+        ):
+            raise ValueError("risk limits must be finite")
         if not 0 < self.risk_per_trade <= 1:
             raise ValueError("risk_per_trade must be in (0, 1]")
         if self.max_positions_global < 1 or self.max_positions_per_pair < 1:
@@ -57,9 +68,26 @@ def evaluate_trade(
     reasons: list[str] = []
     if not pair or "_" not in pair:
         reasons.append("INVALID_PAIR")
-    if context.equity <= 0:
+    finite_context = all(
+        math.isfinite(value)
+        for value in (
+            context.equity,
+            context.drawdown_pct,
+            context.daily_loss_pct,
+            *context.currency_exposure.values(),
+            *(currency_exposure_delta or {}).values(),
+        )
+    )
+    if (
+        not finite_context
+        or context.drawdown_pct < 0
+        or context.daily_loss_pct < 0
+        or any(count < 0 for count in context.open_positions_by_pair.values())
+    ):
+        reasons.append("INVALID_CONTEXT")
+    if not math.isfinite(context.equity) or context.equity <= 0:
         reasons.append("INVALID_EQUITY")
-    if stop_distance <= 0:
+    if not math.isfinite(stop_distance) or stop_distance <= 0:
         reasons.append("INVALID_STOP_DISTANCE")
     if context.bundle_stale:
         reasons.append("STALE_BUNDLE")
@@ -72,12 +100,21 @@ def evaluate_trade(
         reasons.append("MAX_POSITIONS_GLOBAL")
     if context.open_positions_by_pair.get(pair, 0) >= limits.max_positions_per_pair:
         reasons.append("MAX_POSITIONS_PER_PAIR")
-    for currency, delta in (currency_exposure_delta or {}).items():
+    deltas = currency_exposure_delta or {}
+    for currency in context.currency_exposure.keys() | deltas.keys():
         current = context.currency_exposure.get(currency, 0.0)
+        delta = deltas.get(currency, 0.0)
         if abs(current + delta) > limits.max_currency_exposure:
             reasons.append("CURRENCY_EXPOSURE_CAP")
             break
 
-    risk_amount = max(context.equity, 0.0) * limits.risk_per_trade
+    risk_amount = (
+        context.equity * limits.risk_per_trade
+        if math.isfinite(context.equity) and context.equity > 0
+        else 0.0
+    )
     units = risk_amount / stop_distance if stop_distance > 0 else 0.0
+    if not math.isfinite(units):
+        reasons.append("INVALID_STOP_DISTANCE")
+        units = 0.0
     return RiskDecision(not reasons, tuple(dict.fromkeys(reasons)), risk_amount, units)

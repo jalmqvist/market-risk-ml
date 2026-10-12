@@ -51,3 +51,42 @@ def test_invalid_boolean_fails() -> None:
                 "MRML_ALLOW_LIVE": "sometimes",
             }
         )
+
+
+def test_pair_composition_and_risk_configuration_are_explicit() -> None:
+    settings = load_settings(
+        {
+            "MRML_DATABASE_URL": "postgresql://localhost/mrml",
+            "MRML_PAIR_UNIVERSE": "EUR_USD, GBP_USD",
+            "MRML_PAIR_COMPOSITIONS": (
+                "EUR_USD=PhaseAware_TF4_MR42,GBP_USD=PhaseAware_TF4_MR2"
+            ),
+            "MRML_RISK_PER_TRADE": "0.01",
+            "MRML_BAR_BOUNDARY_OFFSET_HOURS": "2",
+        }
+    )
+
+    assert settings.pair_universe == ("EUR_USD", "GBP_USD")
+    assert settings.pair_compositions == (
+        ("EUR_USD", "PhaseAware_TF4_MR42"),
+        ("GBP_USD", "PhaseAware_TF4_MR2"),
+    )
+    assert settings.risk_per_trade == 0.01
+    assert settings.bar_boundary_offset_hours == 2
+
+
+def test_unfrozen_or_live_account_settings_fail_closed() -> None:
+    with pytest.raises(ValueError, match="every frozen pair"):
+        load_settings(
+            {
+                "MRML_DATABASE_URL": "postgresql://localhost/mrml",
+                "MRML_PAIR_UNIVERSE": "EUR_USD",
+            }
+        )
+    with pytest.raises(ValueError, match="practice"):
+        Settings(
+            database_url="postgresql://localhost/mrml",
+            account_mode="live",
+        )
+    with pytest.raises(ValueError, match="FX pairs"):
+        Settings(database_url="sqlite://", pair_universe=("EURUSD",))

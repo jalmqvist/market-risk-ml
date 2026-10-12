@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol, Sequence
+from typing import Protocol
 
 from mrml.contracts.bundle import RecommendationBundle
 from mrml.data.bars import D1Bar
@@ -62,17 +63,27 @@ class StrategyRunner:
         if pair not in self._pair_compositions:
             raise ValueError(f"pair {pair!r} is not in the frozen pair universe")
         candidates = bundle.candidates(pair)
-        ranks = [candidate.rank for candidate in candidates]
-        if not candidates or any(rank <= 0 for rank in ranks) or len(set(ranks)) != len(ranks):
+        ranked_candidates = {
+            (candidate.surface_id, candidate.state_id, candidate.rank)
+            for candidate in candidates
+        }
+        if (
+            not candidates
+            or any(candidate.rank <= 0 for candidate in candidates)
+            or len(ranked_candidates) != len(candidates)
+        ):
             raise ValueError(f"invalid or missing recommendation candidates for {pair}")
         composition = self._pair_compositions[pair]
         evaluation = bundle.evaluation_for(pair, composition)
         if evaluation is None or not any(
-            item.evaluation_id == evaluation.evaluation_id for item in candidates
+            candidate.evaluation_id == evaluation.evaluation_id
+            for candidate in candidates
         ):
             raise ValueError(f"configured composition {composition!r} is not evidenced")
         matching_candidates = tuple(
-            item for item in candidates if item.evaluation_id == evaluation.evaluation_id
+            candidate
+            for candidate in candidates
+            if candidate.evaluation_id == evaluation.evaluation_id
         )
         candidate_rank = min(item.rank for item in matching_candidates)
         # Candidate rank is retained as provenance. It never determines whether

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable
 
 from mrml.data.bars import D1Bar
 
@@ -24,10 +25,16 @@ def compare_bars(
     tolerance: float = 0.0,
 ) -> tuple[BarDifference, ...]:
     """Return sorted field diffs over overlapping timestamps only."""
-    if tolerance < 0:
-        raise ValueError("tolerance must be non-negative")
-    expected_by_time = {bar.timestamp: bar for bar in expected}
-    actual_by_time = {bar.timestamp: bar for bar in actual}
+    if not math.isfinite(tolerance) or tolerance < 0:
+        raise ValueError("tolerance must be finite and non-negative")
+    expected_rows = tuple(expected)
+    actual_rows = tuple(actual)
+    expected_by_time = {bar.timestamp: bar for bar in expected_rows}
+    actual_by_time = {bar.timestamp: bar for bar in actual_rows}
+    if len(expected_by_time) != len(expected_rows) or len(actual_by_time) != len(
+        actual_rows
+    ):
+        raise ValueError("bar inputs must have unique timestamps")
     fields = ("open", "high", "low", "close", "volume")
     differences: list[BarDifference] = []
     for timestamp in sorted(expected_by_time.keys() & actual_by_time.keys()):
@@ -36,7 +43,11 @@ def compare_bars(
         for field in fields:
             expected_value = getattr(left, field)
             actual_value = getattr(right, field)
-            if abs(expected_value - actual_value) > tolerance:
+            if (
+                not math.isfinite(expected_value)
+                or not math.isfinite(actual_value)
+                or abs(expected_value - actual_value) > tolerance
+            ):
                 differences.append(
                     BarDifference(timestamp, field, expected_value, actual_value)
                 )

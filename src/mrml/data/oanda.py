@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import math
+import re
 import time
 from datetime import datetime
 from typing import Any
 
 import requests
 from requests import Session
-from requests.exceptions import RequestException, Timeout
+from requests.exceptions import ConnectionError, RequestException, Timeout
 
 from mrml.data.bars import H1Bar
 
@@ -50,7 +52,13 @@ class OandaClient:
     ) -> None:
         if not token.strip():
             raise ValueError("OANDA practice token must not be empty")
-        if timeout_seconds <= 0 or retries < 0 or backoff_seconds < 0:
+        if (
+            not math.isfinite(timeout_seconds)
+            or not math.isfinite(backoff_seconds)
+            or timeout_seconds <= 0
+            or retries < 0
+            or backoff_seconds < 0
+        ):
             raise ValueError("timeouts/backoff must be non-negative and retries >= 0")
         self._token = token
         self._timeout = timeout_seconds
@@ -63,7 +71,7 @@ class OandaClient:
         self, instrument: str, *, start: datetime, end: datetime
     ) -> tuple[H1Bar, ...]:
         """Fetch complete/incomplete H1 mid candles in a half-open time range."""
-        if not instrument or "/" in instrument:
+        if re.fullmatch(r"[A-Z]{3}_[A-Z]{3}", instrument) is None:
             raise ValueError("instrument must be an OANDA instrument name")
         if start.tzinfo is None or end.tzinfo is None or start >= end:
             raise ValueError("start/end must be aware timestamps with start < end")
@@ -79,12 +87,15 @@ class OandaClient:
         try:
             return tuple(
                 H1Bar(
-                    timestamp=datetime.fromisoformat(candle["time"].replace("Z", "+00:00")),
+                    timestamp=datetime.fromisoformat(
+                        candle["time"].replace("Z", "+00:00")
+                    ),
                     open=float(candle["mid"]["o"]),
                     high=float(candle["mid"]["h"]),
                     low=float(candle["mid"]["l"]),
                     close=float(candle["mid"]["c"]),
                     volume=float(candle["volume"]),
+                    complete=candle["complete"] is True,
                 )
                 for candle in payload["candles"]
             )
@@ -100,9 +111,14 @@ class OandaClient:
                     headers={"Authorization": "Bearer " + self._token},
                     timeout=self._timeout,
                 )
-            except Timeout as error:
+            except (Timeout, ConnectionError) as error:
                 if attempt == self._retries:
-                    raise OandaRequestError("OANDA request timed out") from error
+                    message = (
+                        "OANDA request timed out"
+                        if isinstance(error, Timeout)
+                        else "OANDA connection failed"
+                    )
+                    raise OandaRequestError(message) from error
                 self._sleep(self._backoff * (2**attempt))
                 continue
             except RequestException as error:
@@ -112,10 +128,19 @@ class OandaClient:
                 raise OandaAuthenticationError("OANDA rejected the practice token")
             if response.status_code == 429:
                 if attempt == self._retries:
-                    raise OandaRateLimitError("OANDA rate limit persisted after retries")
+                    raise OandaRateLimitError(
+                        "OANDA rate limit persisted after retries"
+                    )
                 retry_after = response.headers.get("Retry-After")
-                delay = float(retry_after) if retry_after else self._backoff * (2**attempt)
-                self._sleep(max(delay, 0.0))
+                try:
+                    delay = (
+                        float(retry_after)
+                        if retry_after
+                        else self._backoff * (2**attempt)
+                    )
+                except ValueError:
+                    delay = self._backoff * (2**attempt)
+                self._sleep(delay if math.isfinite(delay) and delay > 0 else 0.0)
                 continue
             if 500 <= response.status_code < 600:
                 if attempt == self._retries:
@@ -123,9 +148,7 @@ class OandaClient:
                 self._sleep(self._backoff * (2**attempt))
                 continue
             if not response.ok:
-                raise OandaRequestError(
-                    f"OANDA returned HTTP {response.status_code}"
-                )
+                raise OandaRequestError(f"OANDA returned HTTP {response.status_code}")
             try:
                 data = response.json()
             except (ValueError, requests.exceptions.JSONDecodeError) as error:
