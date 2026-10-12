@@ -10,3 +10,5 @@
   direction (PhaseAware-first v0, no live state resolver in v0, ADR status sync).
 - Rewrote ROADMAP.md as a single canonical v0.3 execution plan to remove
   superseded phase ambiguity.
+- Rewrote ARCHITECTURE.md as a single canonical v0.3 document and removed
+  transitional split-structure sections.
