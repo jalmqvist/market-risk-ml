@@ -1,72 +1,63 @@
-# MRML Roadmap (v0.2, 2026-10-07)
+# MRML Roadmap (v0.3 canonical, 2026-10-12)
 
 Capacity: 2 h/weekday = 10 h/week. Each PR targets 8-12 h unless noted.
 Rule: one PR open at a time. Each PR ends with green CI and a short note in
 docs/CHANGELOG.md.
 
+## Scope baseline (v0)
+- Execution/risk/journaling harness for forward testing on OANDA demo.
+- PhaseAware-first operation from MPML bundles.
+- No live state resolution in v0; no selector model-serving in v0.
+
 ## Week 0 (Thu Oct 8 - Fri Oct 9): unblock, don't build
-- Launch MPML runs on the server (A1 first, then A3/A2). Decide Persistent
-  candidate compositions.
-- Collect inputs for PR 3: schema printouts of real strategy_evaluations.parquet,
-  recommendations.parquet, experiment_manifest.json (see "Inputs needed").
-- Create the empty mrml repo on GitHub, enable branch protection on main.
+- Launch MPML runs on the server (A1 first, then A3/A2).
+- Decide initial candidate compositions for v0 bundle consumption.
+- Collect real artifact schema printouts for contracts hardening.
+- Create the MRML repo and enable branch protection on `main`.
 
 ## Phase 1: Foundations (Weeks 1-2)
 PR1 (Wk1)   Scaffold, config, CI, docker-compose Postgres, contracts + bundle
-            loader against synthetic fixtures. [prompt below]
+            loader against synthetic fixtures.
 PR2 (Wk1-2) Journal: SQLAlchemy models, Alembic migrations, repositories,
-            idempotency keys. Tests against a real Postgres in CI.
-PR3 (Wk2)   Bundle loader v2: validate against REAL MPML artifacts; resolve
-            ADR-001 (pair dimension, strategy_id semantics). Staleness checks.
+            idempotency keys. Tests against real Postgres in CI.
+PR3 (Wk2)   Bundle loader v2 against real MPML artifacts; harden semantics and
+            staleness/evidence checks.
 
-## Phase 2: Data and strategy parity (Weeks 3-4)
+## Phase 2: Data, parity, and risk (Weeks 3-4)
 PR4 (Wk3)   OANDA client (practice only, requests-based, retries, timeouts) +
-            H1 -> D1 bar builder with MPML-identical boundaries. Parity test:
-            rebuild a stretch of MPML's D1 bars from H1 and diff. Resolves ADR-004.
-PR5 (Wk3-4) RiskController: pure functions, flat sizing, currency exposure caps,
-            kill switch, daily loss limit. Property-style tests.
-PR6 (Wk4)   TrendVolResolver + StrategyRunner wrapping MPML. Replay test: run
-            2-3 years of history, diff entries/exits against MPML artifacts.
-            Resolves ADR-002. If the replay won't match, STOP and fix here.
+            H1->D1 bar builder with MPML-identical boundaries; diff on overlap.
+PR5 (Wk3-4) RiskController: flat sizing, currency exposure caps, kill switch,
+            daily loss limit; property-style tests.
+PR6 (Wk4)   StrategyRunner wrapping PhaseAware via MPML; replay parity vs MPML
+            trade artifacts (diff = 0). No state resolver in v0.
 
 ## Phase 3: Execution and burn-in (Weeks 5-6)
 PR7 (Wk5)   Order manager (deterministic client_order_id), reconciler,
-            fail-closed behaviour, dry-run mode.
-PR8 (Wk5-6) Daily runner, locking, run summary, alerting (email or Telegram).
-PR9 (Wk6)   Deployment: server setup, cron/systemd timer, backups, runbook.
-            Start Stage A on OANDA demo (TrendVol only).
+            fail-closed behavior, dry-run mode.
+PR8 (Wk5-6) Daily runner, locking, run summary, alerting.
+PR9 (Wk6)   Deployment: server setup, scheduler (cron/systemd), backups,
+            runbook. Start Stage A on OANDA demo.
 
-## Phase 4: Behavioral surfaces (Weeks 7-10)
-PR10 (Wk7)  Sentiment ingest: Postgres schema for scraper output, data-quality
-            checks (gaps, duplicates, broker tag). Resolves ADR-003 (cadence).
-PR11 (Wk8)  BehavioralResolver for Reactive-JPY using frozen BSVE calibration.
-            Golden test: reproduce BSVE state assignments with diff = 0.
-PR12 (Wk9)  Wire Reactive-JPY recommendations into the runner. Stage B in
-            dry-run first, then demo.
-Buffer (Wk10) Overrun, bug fixes, documentation.
+## Phase 4: Monitoring and operating cadence (Weeks 7-8)
+PR10 (Wk7)  Monitoring/reporting: slippage vs assumed costs, daily parity
+            checks, per-pair outcome report.
+PR11 (Wk8)  Operational hardening: reconciliation diagnostics, alert quality,
+            runbook drills, restore-test cadence.
 
-## Phase 5: After MPML ablations land (Week 11+)
-- Persistent surface (Stage C) once A1/A3/A2 results decide composition and
-  whether live ANN inference is needed.
-- Shadow analysis: logged state transitions vs. realised outcomes, to test
-  the state-transition exit offline.
-- First review of the forward-test journal (see success criteria).
-- Decide on sizing research, and on any commercial path.
+## Later (post-A1/A3 evidence)
+- Alternative-composition bundles (config changes only where possible).
+- Sentiment ingest and shadow state logging for research.
+- Model-serving decision for selector path (out of v0).
+- Parallel MPML provenance improvements (dataset_version, data start/end,
+  fingerprint).
 
 ## Weekly rhythm
-- Mon: plan the week's PR slice. Fri: 20-minute review of what's merged,
-  update this file.
-- Keep a "parking lot" section for ideas. Nothing enters a phase without displacing something.
+- Mon: plan the week's PR slice.
+- Fri: 20-minute review of merged work; update this file.
+- Keep a parking lot section for ideas. Nothing enters a phase without
+  displacing something.
 
----
-
-# ROADMAP changes (2026-10-08, replaces Phases 2-5)
-PR4  OANDA client + H1->D1 builder; diff vs MPML bars on the overlap.
-PR5  RiskController (flat sizing, currency caps, kill switch, daily loss limit).
-PR6  StrategyRunner wrapping PhaseAware via MPML; replay parity vs MPML trade
-     artifacts (diff = 0). No state resolver.
-PR7-9 Order manager, reconciler, runner, deployment (unchanged).
-PR10 Monitoring: slippage vs assumed costs, daily parity check, per-pair report.
-Later (after A1/A3): alternative-composition bundles; sentiment ingest and
-shadow state logging; model-serving decision for the selector.
-Parallel MPML PR: provenance (dataset_version, data start/end, fingerprint).
+## Superseded plan note
+The previous roadmap structure (including state-resolver-first sequencing in
+older Phase 2-5 text) was superseded by the 2026-10-08 architecture/ADR
+updates and consolidated here into a single canonical plan.
