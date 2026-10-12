@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from mrml.config import Settings
-from mrml.contracts.bundle import load_bundle
+from mrml.contracts.bundle import RecommendationBundle, load_bundle
 from mrml.data.bars import D1Bar, H1Bar
 from mrml.journal.models import (
     ConfigSnapshot,
@@ -180,6 +180,27 @@ def test_daily_run_happy_path_is_journaled_and_idempotent(tmp_path: Path) -> Non
     assert len(row.config_hash) == 64
     assert len(row.bundle_hash) == 64
     assert row.code_version == "test-version"
+
+
+def test_daily_run_journals_hash_of_bundle_used_for_execution(
+    tmp_path: Path,
+) -> None:
+    runner, journal, _ = _runner(tmp_path)
+    bundle = load_bundle(FIXTURES)
+    calls = 0
+
+    def load_once() -> RecommendationBundle:
+        nonlocal calls
+        calls += 1
+        return bundle
+
+    runner.bundle_loader = load_once
+
+    result = runner.run(RUN_DATE)
+
+    assert result.status == "completed"
+    assert calls == 1
+    assert _run_row(journal._engine).bundle_hash == bundle.content_hash
 
 
 def test_flat_strategy_signal_is_not_traded_even_when_candidate_is_rank_one(

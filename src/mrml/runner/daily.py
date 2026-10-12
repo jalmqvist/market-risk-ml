@@ -121,7 +121,12 @@ class DailyRunner:
                 config_snapshot = asdict(self.settings)
                 config_snapshot["bundle_dir"] = str(self.settings.bundle_dir)
                 config_hash = _json_hash(config_snapshot)
-                bundle_hash = _bundle_hash(self.settings.bundle_dir)
+                try:
+                    bundle = self.bundle_loader()
+                    bundle_hash = bundle.content_hash
+                except Exception:
+                    bundle = None
+                    bundle_hash = _bundle_hash(self.settings.bundle_dir)
                 try:
                     run = self.journal.create_run(
                         run_date=run_date,
@@ -135,12 +140,14 @@ class DailyRunner:
                     return RunResult(None, "blocked", ("JOURNAL_UNAVAILABLE",), {})
                 if not run.created:
                     return RunResult(run.run_id, "blocked", ("ALREADY_RUN",), {})
-                return self._execute(run.run_id, run_date)
+                return self._execute(run.run_id, run_date, bundle)
         except OSError:
             logger.exception("Daily run lock could not be acquired")
             return RunResult(None, "blocked", ("RUN_LOCK_UNAVAILABLE",), {})
 
-    def _execute(self, run_id: str, run_date: date) -> RunResult:
+    def _execute(
+        self, run_id: str, run_date: date, bundle: RecommendationBundle | None
+    ) -> RunResult:
         try:
             if not self.reconcile():
                 return self._halt(run_id, "RECONCILIATION_MISMATCH")
@@ -223,7 +230,8 @@ class DailyRunner:
             return self._halt(run_id, "BAR_HISTORY_INVALID")
 
         try:
-            bundle = self.bundle_loader()
+            if bundle is None:
+                return self._halt(run_id, "BUNDLE_INVALID")
             if not bundle.is_trade_eligible(run_date):
                 return self._halt(run_id, "BUNDLE_STALE_OR_INELIGIBLE")
         except Exception:
