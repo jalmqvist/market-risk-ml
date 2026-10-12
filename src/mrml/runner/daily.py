@@ -201,6 +201,7 @@ class DailyRunner:
                                 bar.volume,
                             )
                         )
+                        or min(bar.open, bar.high, bar.low, bar.close) <= 0
                         or bar.volume < 0
                         or bar.low > min(bar.open, bar.close)
                         or bar.high < max(bar.open, bar.close)

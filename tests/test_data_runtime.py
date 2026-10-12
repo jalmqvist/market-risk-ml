@@ -106,6 +106,11 @@ def test_bar_builder_rejects_naive_or_invalid_prices() -> None:
     invalid = H1Bar(datetime(2026, 1, 1, tzinfo=UTC), open=5, high=2, low=0, close=1)
     with pytest.raises(ValueError, match="values are invalid"):
         build_d1_bars((invalid,))
+    nonpositive = H1Bar(
+        datetime(2026, 1, 1, tzinfo=UTC), open=-1, high=-0.9, low=-1.1, close=-1
+    )
+    with pytest.raises(ValueError, match="values are invalid"):
+        build_d1_bars((nonpositive,))
 
 
 def test_parity_comparison_is_sorted_and_uses_only_overlap() -> None:

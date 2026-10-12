@@ -58,6 +58,7 @@ def build_d1_bars(
         prices = (bar.open, bar.high, bar.low, bar.close, bar.volume)
         if (
             not all(math.isfinite(value) for value in prices)
+            or min(bar.open, bar.high, bar.low, bar.close) <= 0
             or bar.volume < 0
             or bar.low > min(bar.open, bar.close)
             or bar.high < max(bar.open, bar.close)
