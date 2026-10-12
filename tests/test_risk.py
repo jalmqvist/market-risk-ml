@@ -100,3 +100,17 @@ def test_non_account_quote_currency_requires_conversion_for_correct_sizing() -> 
     assert "MISSING_CURRENCY_CONVERSION" in missing.reasons
     assert converted.allowed
     assert converted.units == 20
+
+
+@pytest.mark.parametrize("rate", [0.0, -1.0, math.nan, math.inf])
+def test_invalid_currency_conversion_fails_closed_without_sizing(rate: float) -> None:
+    decision = evaluate_trade(
+        RiskLimits(),
+        RiskContext(equity=10_000, currency_to_account={"GBP": rate}),
+        pair="EUR_GBP",
+        stop_distance=2,
+    )
+
+    assert not decision.allowed
+    assert decision.units == 0
+    assert "INVALID_CURRENCY_CONVERSION" in decision.reasons

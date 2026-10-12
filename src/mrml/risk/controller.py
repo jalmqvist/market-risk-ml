@@ -112,6 +112,8 @@ def evaluate_trade(
         reasons.append("INVALID_STOP_DISTANCE")
     if conversion_rate is None:
         reasons.append("MISSING_CURRENCY_CONVERSION")
+    elif not math.isfinite(conversion_rate) or conversion_rate <= 0:
+        reasons.append("INVALID_CURRENCY_CONVERSION")
     if context.bundle_stale:
         reasons.append("STALE_BUNDLE")
     if context.drawdown_pct >= limits.max_drawdown_pct:
@@ -138,7 +140,12 @@ def evaluate_trade(
     )
     units = (
         risk_amount / (stop_distance * conversion_rate)
-        if stop_distance > 0 and conversion_rate is not None
+        if (
+            stop_distance > 0
+            and conversion_rate is not None
+            and math.isfinite(conversion_rate)
+            and conversion_rate > 0
+        )
         else 0.0
     )
     if not math.isfinite(units):
