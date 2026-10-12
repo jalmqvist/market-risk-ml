@@ -71,10 +71,11 @@ field name and maximum evidence age through the loader arguments.
 Assumptions for this scaffold: required `MRML_DATABASE_URL` has no default;
 bundle schema version `1.0` is the initial supported version; an ambiguous
 `evaluation_for(pair, strategy_id)` result raises a validation error instead
-of selecting an arbitrary evaluation. Pair and strategy identifier semantics
-remain unresolved as recorded in [ADR-001](docs/adr/ADRs.md#adr-001-mpml-artifact-semantics).
-The amendment's state provenance behavior follows [ADR-006](docs/adr/ADRs.md#adr-006-state-resolution-and-recommendation-semantics):
-state is not a lookup key. No trading rules are inferred or implemented.
+of selecting an arbitrary evaluation. Pair and strategy identifier semantics are
+documented in [ADR-001](docs/adr/ADRs.md#adr-001-mpml-artifact-semantics)
+(resolved 2026-10-08). The amendment's state provenance behavior follows
+[ADR-006](docs/adr/ADRs.md#adr-006-state-resolution-and-recommendation-semantics):
+state is not a lookup key in v0. No trading rules are inferred or implemented.
 
 ## Documentation
 

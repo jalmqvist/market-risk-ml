@@ -1,5 +1,5 @@
 # ADR-001: MPML artifact semantics
-Status: OPEN. Decide in PR3.
+Status: RESOLVED (2026-10-08).
 Question: What exactly do surface_id/state_id/strategy_id/evaluation_id mean
 for a recommendation, and how is the pair dimension represented (column,
 metadata, or per-pair evaluation_id)?
@@ -7,7 +7,7 @@ Action: print schemas of a real bundle; write the answer here; make the
 contracts match.
 
 # ADR-002: Runtime dependency on MPML's selector
-Status: OPEN. Decide in PR6.
+Status: RESOLVED (2026-10-08).
 Question: When the recommendation says "PhaseAware_TF4_MR2", does the MPML
 walk-forward behaviour depend on the XGBoost selector (confidence gating,
 hysteresis, minimum hold, ATR% guard) at inference?
@@ -17,7 +17,7 @@ If no: MRML only needs the strategy logic and a lookup.
 Default assumption until verified: yes, it depends. Do not assume otherwise.
 
 # ADR-003: Sentiment cadence parity
-Status: OPEN. Decide in PR10.
+Status: DEFERRED (2026-10-08; model-serving stage).
 Question: The frozen calibration was built on 3 sentiment points per day. Which
 hourly timestamps correspond to those, and how is the state computed at the
 D1 decision time? Replace nothing silently: document the mapping and add a test.
