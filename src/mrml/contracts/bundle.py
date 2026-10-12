@@ -261,14 +261,11 @@ def _validate_recommendation_metadata(
 
 
 def _check_recommendation_ranks(
-    frame: pd.DataFrame, artifact: str, *, per_pair: bool
+    frame: pd.DataFrame, artifact: str
 ) -> None:
     if (frame["rank"] < 1).any():
         raise InvalidRankError(f"{artifact}.rank values must be positive")
-    if per_pair:
-        groups = ["pair", "surface_id", "state_id"]
-    else:
-        groups = ["evaluation_id"]
+    groups = ["pair", "surface_id", "state_id"]
     if frame.duplicated(groups + ["rank"]).any():
         raise InvalidRankError(
             f"{artifact}.rank values must be unique within {', '.join(groups)}"
@@ -322,6 +319,16 @@ def _evaluation_rows(frame: pd.DataFrame) -> tuple[StrategyEvaluation, ...]:
     result = []
     for index, row in frame.iterrows():
         metadata = _decode_metadata(row["metadata"], context=f"evaluation row {index}")
+        pair = metadata.get("pair")
+        pair_count = metadata.get("pair_count")
+        if pair is not None and not isinstance(pair, str):
+            raise InvalidDtypeError(
+                f"evaluation row {index} metadata pair must be a string"
+            )
+        if isinstance(pair_count, int) and pair_count > 1 and pair is not None:
+            raise InvalidBundleError(
+                f"aggregate evaluation row {index} must not declare a pair"
+            )
         result.append(
             StrategyEvaluation(
                 evaluation_id=row["evaluation_id"],
@@ -422,10 +429,9 @@ def load_bundle(
     _check_unique_ids(recommendations_frame, "recommendation_id", "recommendations")
     _check_unique_ids(per_pair_frame, "recommendation_id", "recommendations_per_pair")
     _check_unique_ids(evaluations_frame, "evaluation_id", "strategy_evaluations")
-    _check_recommendation_ranks(recommendations_frame, "recommendations", per_pair=False)
-    _check_recommendation_ranks(
-        per_pair_frame, "recommendations_per_pair", per_pair=True
-    )
+    if (recommendations_frame["rank"] < 1).any():
+        raise InvalidRankError("recommendations.rank values must be positive")
+    _check_recommendation_ranks(per_pair_frame, "recommendations_per_pair")
 
     evaluation_ids = set(evaluations_frame["evaluation_id"])
     for artifact, frame in (
