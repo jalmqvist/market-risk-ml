@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping, Set
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any
 
 import pandas as pd
 from pandas.api.types import is_integer_dtype, is_numeric_dtype
@@ -33,54 +34,64 @@ from mrml.contracts.schemas import (
 )
 
 SUPPORTED_SCHEMA_VERSIONS = frozenset({"1.0"})
-_RECOMMENDATION_COLUMNS = {
-    "recommendation_id",
-    "evaluation_id",
-    "rank",
-    "recommendation_policy",
-    "metadata",
-}
-_PER_PAIR_COLUMNS = _RECOMMENDATION_COLUMNS | {
-    "pair",
-    "surface_id",
-    "state_id",
-}
-_EVALUATION_COLUMNS = {
-    "evaluation_id",
-    "surface_id",
-    "surface_version",
-    "state_id",
-    "strategy_id",
-    "expected_return",
-    "expected_sharpe",
-    "expected_drawdown",
-    "win_rate",
-    "confidence",
-    "stability",
-    "n_folds",
-    "n_trades",
-    "metadata",
-}
-_STRING_COLUMNS = {
-    "recommendation_id",
-    "evaluation_id",
-    "recommendation_policy",
-    "pair",
-    "surface_id",
-    "state_id",
-    "surface_version",
-    "strategy_id",
-    "metadata",
-}
-_NUMERIC_EVALUATION_COLUMNS = {
-    "expected_return",
-    "expected_sharpe",
-    "expected_drawdown",
-    "win_rate",
-    "confidence",
-    "stability",
-}
-_INTEGER_COLUMNS = {"rank", "n_folds", "n_trades"}
+_RECOMMENDATION_COLUMNS = frozenset(
+    {
+        "recommendation_id",
+        "evaluation_id",
+        "rank",
+        "recommendation_policy",
+        "metadata",
+    }
+)
+_PER_PAIR_COLUMNS = _RECOMMENDATION_COLUMNS | frozenset(
+    {
+        "pair",
+        "surface_id",
+        "state_id",
+    }
+)
+_EVALUATION_COLUMNS = frozenset(
+    {
+        "evaluation_id",
+        "surface_id",
+        "surface_version",
+        "state_id",
+        "strategy_id",
+        "expected_return",
+        "expected_sharpe",
+        "expected_drawdown",
+        "win_rate",
+        "confidence",
+        "stability",
+        "n_folds",
+        "n_trades",
+        "metadata",
+    }
+)
+_STRING_COLUMNS = frozenset(
+    {
+        "recommendation_id",
+        "evaluation_id",
+        "recommendation_policy",
+        "pair",
+        "surface_id",
+        "state_id",
+        "surface_version",
+        "strategy_id",
+        "metadata",
+    }
+)
+_NUMERIC_EVALUATION_COLUMNS = frozenset(
+    {
+        "expected_return",
+        "expected_sharpe",
+        "expected_drawdown",
+        "win_rate",
+        "confidence",
+        "stability",
+    }
+)
+_INTEGER_COLUMNS = frozenset({"rank", "n_folds", "n_trades"})
 
 
 @dataclass(frozen=True)
@@ -158,7 +169,7 @@ class RecommendationBundle:
         return (check_date - self.evidence_end_date).days <= self.max_evidence_age_days
 
     def candidates(self, pair: str) -> tuple[RecommendationPerPair, ...]:
-        """Return pair-specific candidate evidence ordered by rank; state is provenance."""
+        """Return pair-specific candidate evidence; state remains provenance."""
         return tuple(
             sorted(
                 (item for item in self.recommendations_per_pair if item.pair == pair),
@@ -171,10 +182,8 @@ class RecommendationBundle:
             )
         )
 
-    def evaluation_for(
-        self, pair: str, strategy_id: str
-    ) -> StrategyEvaluation | None:
-        """Find a unique evaluation by pair and strategy; raises on ambiguous matches."""
+    def evaluation_for(self, pair: str, strategy_id: str) -> StrategyEvaluation | None:
+        """Find an evaluation; raises InvalidBundleError if the match is ambiguous."""
         matches = tuple(
             item
             for item in self.strategy_evaluations
@@ -210,9 +219,7 @@ def _freeze(value: Any) -> Any:
     return value
 
 
-def _check_columns(
-    frame: pd.DataFrame, required: set[str], *, artifact: str
-) -> None:
+def _check_columns(frame: pd.DataFrame, required: Set[str], *, artifact: str) -> None:
     missing = required - set(frame.columns)
     if missing:
         raise MissingColumnError(
@@ -221,7 +228,10 @@ def _check_columns(
 
 
 def _check_dtypes(
-    frame: pd.DataFrame, *, artifact: str, extra_string_columns: set[str] | None = None
+    frame: pd.DataFrame,
+    *,
+    artifact: str,
+    extra_string_columns: Set[str] | None = None,
 ) -> None:
     string_columns = _STRING_COLUMNS | (extra_string_columns or set())
     for column in string_columns & set(frame.columns):
@@ -233,9 +243,13 @@ def _check_dtypes(
     for column in _NUMERIC_EVALUATION_COLUMNS & set(frame.columns):
         if not is_numeric_dtype(frame[column].dtype):
             raise InvalidDtypeError(f"{artifact}.{column} must have a numeric dtype")
+        if column not in {"win_rate", "confidence"} and frame[column].isna().any():
+            raise InvalidDtypeError(f"{artifact}.{column} must not contain null values")
     for column in _INTEGER_COLUMNS & set(frame.columns):
         if not is_integer_dtype(frame[column].dtype):
             raise InvalidDtypeError(f"{artifact}.{column} must have an integer dtype")
+        if frame[column].isna().any():
+            raise InvalidDtypeError(f"{artifact}.{column} must not contain null values")
 
 
 def _check_unique_ids(frame: pd.DataFrame, column: str, artifact: str) -> None:
@@ -260,9 +274,7 @@ def _validate_recommendation_metadata(
     return metadata
 
 
-def _check_recommendation_ranks(
-    frame: pd.DataFrame, artifact: str
-) -> None:
+def _check_recommendation_ranks(frame: pd.DataFrame, artifact: str) -> None:
     if (frame["rank"] < 1).any():
         raise InvalidRankError(f"{artifact}.rank values must be positive")
     groups = ["pair", "surface_id", "state_id"]
@@ -272,16 +284,20 @@ def _check_recommendation_ranks(
         )
 
 
-def _manifest_date(manifest: Mapping[str, Any], field: str, required: bool) -> date | None:
+def _manifest_date(
+    manifest: Mapping[str, Any], field: str, required: bool
+) -> date | None:
     raw_value = manifest.get(field)
     if raw_value is None or raw_value == "":
         if required:
             raise EvidenceEndDateError(f"Manifest is missing required field {field!r}")
         return None
     if not isinstance(raw_value, str):
-        raise EvidenceEndDateError(f"Manifest field {field!r} must be an ISO date string")
+        raise EvidenceEndDateError(
+            f"Manifest field {field!r} must be an ISO date string"
+        )
     try:
-        return date.fromisoformat(raw_value[:10])
+        return date.fromisoformat(raw_value)
     except ValueError as error:
         raise EvidenceEndDateError(
             f"Manifest field {field!r} must be an ISO date string"
@@ -291,7 +307,7 @@ def _manifest_date(manifest: Mapping[str, Any], field: str, required: bool) -> d
 def _read_manifest(path: Path) -> Mapping[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise InvalidBundleError(f"Could not read manifest {path.name}") from error
     if not isinstance(data, dict):
         raise InvalidBundleError("experiment_manifest.json must contain a JSON object")
@@ -301,8 +317,10 @@ def _read_manifest(path: Path) -> Mapping[str, Any]:
 def _read_parquet(path: Path) -> pd.DataFrame:
     try:
         return pd.read_parquet(path)
-    except (OSError, ValueError, ImportError) as error:
-        raise InvalidBundleError(f"Could not read parquet artifact {path.name}") from error
+    except Exception as error:
+        raise InvalidBundleError(
+            f"Could not read parquet artifact {path.name}"
+        ) from error
 
 
 def _manifest_count(manifest: Mapping[str, Any], key: str, actual: int) -> None:
@@ -414,7 +432,9 @@ def load_bundle(
     _check_columns(
         recommendations_frame, _RECOMMENDATION_COLUMNS, artifact="recommendations"
     )
-    _check_columns(per_pair_frame, _PER_PAIR_COLUMNS, artifact="recommendations_per_pair")
+    _check_columns(
+        per_pair_frame, _PER_PAIR_COLUMNS, artifact="recommendations_per_pair"
+    )
     _check_columns(
         evaluations_frame, _EVALUATION_COLUMNS, artifact="strategy_evaluations"
     )

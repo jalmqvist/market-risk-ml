@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
 
 
 @dataclass(frozen=True)
@@ -23,7 +23,7 @@ class Settings:
     evidence_end_date_field: str = "evidence_end_date"
 
     def __post_init__(self) -> None:
-        """Reject unsupported or unsafe values; raises ValueError on invalid settings."""
+        """Validate values and raise ValueError for unsupported settings."""
         if self.environment not in {"dev", "demo", "live"}:
             raise ValueError("MRML_ENVIRONMENT must be one of: dev, demo, live")
         if self.environment == "live" and not self.allow_live:
@@ -36,7 +36,9 @@ class Settings:
         if self.max_bundle_age_days < 0:
             raise ValueError("MRML_MAX_BUNDLE_AGE_DAYS must be non-negative")
         if self.oanda_environment != "practice":
-            raise ValueError("MRML_OANDA_ENVIRONMENT must be 'practice' in this release")
+            raise ValueError(
+                "MRML_OANDA_ENVIRONMENT must be 'practice' in this release"
+            )
         if self.log_level.upper() not in {
             "CRITICAL",
             "ERROR",
@@ -80,9 +82,7 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         max_bundle_age_days=max_age,
         oanda_environment=values.get("MRML_OANDA_ENVIRONMENT", "practice").strip(),
         log_level=values.get("MRML_LOG_LEVEL", "INFO").strip().upper(),
-        allow_live=_bool_value(
-            "MRML_ALLOW_LIVE", values.get("MRML_ALLOW_LIVE"), False
-        ),
+        allow_live=_bool_value("MRML_ALLOW_LIVE", values.get("MRML_ALLOW_LIVE"), False),
         require_evidence_end_date=_bool_value(
             "MRML_REQUIRE_EVIDENCE_END_DATE",
             values.get("MRML_REQUIRE_EVIDENCE_END_DATE"),

@@ -1,0 +1,20 @@
+{
+  "costs": {
+    "slippage_pips": 0.3,
+    "spread_pips": 1.2
+  },
+  "evaluation_scope": {
+    "strategy_ids": [
+      "strategy-a",
+      "strategy-b"
+    ]
+  },
+  "evidence_end_date": "2026-09-30",
+  "experiment_id": "synthetic-experiment",
+  "git_sha": "0123456789abcdef",
+  "phaseaware_strategy": "synthetic-strategy",
+  "recommendation_per_pair_count": 2,
+  "seed": 42,
+  "strategy_evaluation_count": 3,
+  "timestamp_utc": "2026-10-01T00:00:00Z"
+}

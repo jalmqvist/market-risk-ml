@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date, datetime
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any
 
 
 def immutable_metadata(values: Mapping[str, Any]) -> Mapping[str, Any]:
     """Return a read-only copy of metadata; callers cannot mutate schema instances."""
-    return MappingProxyType(dict(values))
+    return MappingProxyType({key: _freeze(value) for key, value in values.items()})
+
+
+def _freeze(value: Any) -> Any:
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -32,9 +40,10 @@ class StrategyEvaluation:
     n_trades: int
     metadata: Mapping[str, Any]
 
+    # TODO(ADR-001): Confirm pair dimension and strategy_id semantics with MPML.
     @property
     def pair(self) -> str | None:
-        """Return the metadata pair when present; its contract semantics remain ADR-001."""
+        """Return metadata pair when present; semantics remain unresolved in ADR-001."""
         pair = self.metadata.get("pair")
         return pair if isinstance(pair, str) else None
 
@@ -62,7 +71,3 @@ class RecommendationPerPair:
     rank: int
     recommendation_policy: str
     metadata: Mapping[str, Any]
-
-
-ManifestValue = str | int | float | bool | None
-ManifestTimestamp = date | datetime | str | None

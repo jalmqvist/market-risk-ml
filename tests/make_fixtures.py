@@ -11,7 +11,7 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 
 def make_fixtures(directory: Path = FIXTURE_DIR) -> None:
-    """Write deterministic synthetic parquet and manifest files; raises on I/O errors."""
+    """Write deterministic fixtures; raises OSError if writing fails."""
     directory.mkdir(parents=True, exist_ok=True)
     versioned_metadata = json.dumps({"schema_version": "1.0"}, sort_keys=True)
     recommendations = pd.DataFrame(

@@ -69,6 +69,10 @@ def test_loads_provenance_and_lookups(bundle_dir: Path) -> None:
     assert bundle.spread_pips == 1.2
     assert bundle.slippage_pips == 0.3
     assert bundle.strategy_ids == ("strategy-a", "strategy-b")
+    with pytest.raises(TypeError):
+        bundle.strategy_evaluations[0].metadata["pair"] = "USD_JPY"
+    with pytest.raises(TypeError):
+        bundle.manifest["costs"]["spread_pips"] = 9.9
     assert bundle.evidence_end_known
     assert bundle.is_trade_eligible(date(2026, 10, 1))
     assert not bundle.is_trade_eligible(date(2026, 9, 30))
@@ -187,6 +191,14 @@ def test_evidence_date_is_optional_by_default(bundle_dir: Path) -> None:
     assert not bundle.is_trade_eligible(date(2026, 10, 1))
     with pytest.raises(EvidenceEndDateError):
         load_bundle(bundle_dir, require_evidence_end_date=True)
+
+
+def test_evidence_date_field_is_configurable(bundle_dir: Path) -> None:
+    manifest = _read_manifest(bundle_dir)
+    manifest["dataset_through"] = manifest.pop("evidence_end_date")
+    _write_manifest(bundle_dir, manifest)
+    bundle = load_bundle(bundle_dir, evidence_end_date_field="dataset_through")
+    assert bundle.evidence_end_date == date(2026, 9, 30)
 
 
 def test_invalid_evidence_date_fails(bundle_dir: Path) -> None:
