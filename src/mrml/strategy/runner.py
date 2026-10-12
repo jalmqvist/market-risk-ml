@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Protocol
 
 from mrml.contracts.bundle import RecommendationBundle
@@ -53,8 +54,13 @@ class StrategyRunner:
             raise ValueError("at least one frozen pair composition is required")
         if set(pair_compositions.values()) - strategies.keys():
             raise ValueError("a configured composition has no PhaseAware strategy")
-        self._pair_compositions = dict(pair_compositions)
-        self._strategies = strategies
+        self._pair_compositions = MappingProxyType(dict(pair_compositions))
+        self._strategies = dict(strategies)
+
+    @property
+    def pair_compositions(self) -> Mapping[str, str]:
+        """Return the immutable strategy routing frozen for this runner."""
+        return self._pair_compositions
 
     def decide(
         self, pair: str, bars: Sequence[D1Bar], bundle: RecommendationBundle

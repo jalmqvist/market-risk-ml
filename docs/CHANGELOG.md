@@ -9,6 +9,8 @@
   SQLAlchemy journal models/Alembic schema.
 - Added explicit frozen-universe, practice account, risk, evidence, and bar
   boundary configuration; live execution remains blocked.
+- Added account-currency-aware risk sizing; missing quote-currency conversions
+  reject new entries rather than assuming parity.
 - Added offline runtime/risk/journal tests and a CI replay-parity stub; real
   MPML strategy binding, broker reconciliation/order adapter, and historical
   parity fixtures remain follow-ups.

@@ -77,6 +77,8 @@ class DailyRunner:
         self.settings = settings
         self.journal = journal
         self.strategy_runner = strategy_runner
+        if dict(strategy_runner.pair_compositions) != dict(settings.pair_compositions):
+            raise ValueError("strategy routing must match the frozen settings")
         self.reconcile = reconcile
         self.h1_provider = h1_provider
         self.risk_context = risk_context
@@ -107,6 +109,8 @@ class DailyRunner:
             or self.settings.account_mode != "practice"
         ):
             return RunResult(None, "blocked", ("LIVE_MODE_FORBIDDEN",), {})
+        if not self.settings.pair_universe:
+            return RunResult(None, "blocked", ("PAIR_UNIVERSE_UNCONFIGURED",), {})
         try:
             with self.lock.acquire() as acquired:
                 if not acquired:
@@ -196,6 +200,10 @@ class DailyRunner:
         try:
             for pair, decision in decisions.items():
                 context = self.risk_context(pair)
+                if context.account_currency != self.settings.account_currency:
+                    raise ValueError(
+                        "risk context account currency does not match config"
+                    )
                 contexts[pair] = context
                 if decision.direction == "flat":
                     risk = RiskDecision(False, ("NO_SIGNAL",), 0.0, 0.0)

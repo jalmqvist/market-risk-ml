@@ -24,6 +24,7 @@ class Settings:
     require_evidence_end_date: bool = False
     evidence_end_date_field: str = "evidence_end_date"
     account_mode: str = "practice"
+    account_currency: str = "USD"
     execution_mode: str = "dry_run"
     pair_universe: tuple[str, ...] = ()
     pair_compositions: tuple[tuple[str, str], ...] = ()
@@ -54,6 +55,8 @@ class Settings:
             )
         if self.account_mode != "practice":
             raise ValueError("MRML_ACCOUNT_MODE must be 'practice' in this release")
+        if re.fullmatch(r"[A-Z]{3}", self.account_currency) is None:
+            raise ValueError("MRML_ACCOUNT_CURRENCY must be a three-letter code")
         if self.execution_mode not in {"dry_run", "demo"}:
             raise ValueError("MRML_EXECUTION_MODE must be dry_run or demo")
         if self.log_level.upper() not in {
@@ -175,6 +178,7 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
             "MRML_EVIDENCE_END_DATE_FIELD", "evidence_end_date"
         ).strip(),
         account_mode=values.get("MRML_ACCOUNT_MODE", "practice").strip().lower(),
+        account_currency=values.get("MRML_ACCOUNT_CURRENCY", "USD").strip().upper(),
         execution_mode=values.get("MRML_EXECUTION_MODE", "dry_run").strip().lower(),
         pair_universe=_csv_values(values.get("MRML_PAIR_UNIVERSE", "")),
         pair_compositions=_composition_values(values.get("MRML_PAIR_COMPOSITIONS", "")),

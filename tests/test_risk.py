@@ -77,3 +77,26 @@ def test_invalid_limits_are_rejected() -> None:
         RiskLimits(risk_per_trade=0)
     with pytest.raises(ValueError, match="finite"):
         RiskLimits(max_currency_exposure=math.nan)
+
+
+def test_non_account_quote_currency_requires_conversion_for_correct_sizing() -> None:
+    missing = evaluate_trade(
+        RiskLimits(),
+        RiskContext(equity=10_000),
+        pair="EUR_GBP",
+        stop_distance=2,
+    )
+    converted = evaluate_trade(
+        RiskLimits(),
+        RiskContext(
+            equity=10_000,
+            currency_to_account={"GBP": 1.25},
+        ),
+        pair="EUR_GBP",
+        stop_distance=2,
+    )
+
+    assert not missing.allowed
+    assert "MISSING_CURRENCY_CONVERSION" in missing.reasons
+    assert converted.allowed
+    assert converted.units == 20

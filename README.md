@@ -90,6 +90,8 @@ resolver is part of this runtime.
 
 `DailyRunner` requires reconciliation, complete H1 data, a current evidence
 bundle, strategy decisions, and risk decisions before any execution handoff.
+Risk sizing converts quote-currency stop distance into account-currency units;
+missing conversion rates block non-account-currency quote pairs.
 The default mode is `dry_run`; `demo` requires an injected practice-account
 executor. No live order adapter is provided. Runs, config snapshots, signals,
 risk decisions, and order/fill placeholders are persisted with SQLAlchemy.

@@ -63,6 +63,7 @@ def test_pair_composition_and_risk_configuration_are_explicit() -> None:
             ),
             "MRML_RISK_PER_TRADE": "0.01",
             "MRML_BAR_BOUNDARY_OFFSET_HOURS": "2",
+            "MRML_ACCOUNT_CURRENCY": "GBP",
         }
     )
 
@@ -73,6 +74,7 @@ def test_pair_composition_and_risk_configuration_are_explicit() -> None:
     )
     assert settings.risk_per_trade == 0.01
     assert settings.bar_boundary_offset_hours == 2
+    assert settings.account_currency == "GBP"
 
 
 def test_unfrozen_or_live_account_settings_fail_closed() -> None:
