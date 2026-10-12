@@ -88,8 +88,11 @@ are retained for provenance but are not entry signals. The strategy implementati
 must be supplied by the pinned MPML integration; no selector or live state
 resolver is part of this runtime.
 
-`DailyRunner` requires reconciliation, complete H1 data, a current evidence
+`DailyRunner` requires reconciliation, complete current H1 data, a fresh
+historical D1 series (normally seeded from MPML CSV history), a current evidence
 bundle, strategy decisions, and risk decisions before any execution handoff.
+The strategy receives the validated historical series plus the newly built D1
+bar; stale, empty, unsorted, duplicated, or malformed history halts the run.
 Risk sizing converts quote-currency stop distance into account-currency units;
 missing conversion rates block non-account-currency quote pairs.
 The default mode is `dry_run`; `demo` requires an injected practice-account

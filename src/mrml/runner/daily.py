@@ -6,15 +6,16 @@ import fcntl
 import hashlib
 import json
 import logging
+import math
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
 from mrml.config import Settings
 from mrml.contracts.bundle import RecommendationBundle, load_bundle
-from mrml.data.bars import H1Bar, build_d1_bars
+from mrml.data.bars import D1Bar, H1Bar, build_d1_bars
 from mrml.execution import DemoExecutionHandoff
 from mrml.journal.repository import JournalRepository
 from mrml.risk.controller import (
@@ -68,7 +69,8 @@ class DailyRunner:
         strategy_runner: StrategyRunner,
         reconcile: Callable[[], bool],
         h1_provider: Callable[[date], Mapping[str, Sequence[H1Bar]]],
-        risk_context: Callable[[str], RiskContext],
+        bar_history_provider: Callable[[str, date], Sequence[D1Bar]],
+        risk_context: Callable[[], RiskContext],
         executor: DemoExecutionHandoff | None = None,
         lock: FileRunLock | None = None,
         bundle_loader: Callable[[], RecommendationBundle] | None = None,
@@ -81,6 +83,7 @@ class DailyRunner:
             raise ValueError("strategy routing must match the frozen settings")
         self.reconcile = reconcile
         self.h1_provider = h1_provider
+        self.bar_history_provider = bar_history_provider
         self.risk_context = risk_context
         self.executor = executor
         self.lock = lock or FileRunLock()
@@ -160,13 +163,55 @@ class DailyRunner:
                 )
                 for pair in self.settings.pair_universe
             }
-            if any(
-                not any(bar.timestamp.date() == run_date for bar in bars)
-                for bars in daily.values()
-            ):
+            if any(len(bars) != 1 for bars in daily.values()):
                 return self._halt(run_id, "BAR_DATA_MISSING")
         except Exception:
             return self._halt(run_id, "BAR_BUILD_FAILED")
+
+        strategy_bars: dict[str, tuple[D1Bar, ...]] = {}
+        try:
+            for pair in self.settings.pair_universe:
+                history = tuple(self.bar_history_provider(pair, run_date))
+                if any(
+                    bar.timestamp.tzinfo is None or bar.timestamp.utcoffset() is None
+                    for bar in history
+                ):
+                    return self._halt(run_id, "BAR_HISTORY_INVALID")
+                history = tuple(
+                    replace(bar, timestamp=bar.timestamp.astimezone(UTC))
+                    for bar in history
+                )
+                timestamps = tuple(bar.timestamp for bar in history)
+                if (
+                    not history
+                    or timestamps != tuple(sorted(timestamps))
+                    or len(set(timestamps)) != len(timestamps)
+                    or any(
+                        bar.timestamp.date() >= run_date
+                        or not all(
+                            math.isfinite(value)
+                            for value in (
+                                bar.open,
+                                bar.high,
+                                bar.low,
+                                bar.close,
+                                bar.volume,
+                            )
+                        )
+                        or bar.low > min(bar.open, bar.close)
+                        or bar.high < max(bar.open, bar.close)
+                        or bar.low > bar.high
+                        for bar in history
+                    )
+                ):
+                    return self._halt(run_id, "BAR_HISTORY_INVALID")
+                if (run_date - history[-1].timestamp.date()).days > (
+                    self.settings.max_bar_history_age_days
+                ):
+                    return self._halt(run_id, "BAR_HISTORY_STALE")
+                strategy_bars[pair] = (*history, daily[pair][0])
+        except Exception:
+            return self._halt(run_id, "BAR_HISTORY_INVALID")
 
         try:
             bundle = self.bundle_loader()
@@ -178,10 +223,9 @@ class DailyRunner:
         decisions: dict[str, StrategyDecision] = {}
         try:
             for pair in self.settings.pair_universe:
-                bars = tuple(
-                    bar for bar in daily[pair] if bar.timestamp.date() <= run_date
+                decision = self.strategy_runner.decide(
+                    pair, strategy_bars[pair], bundle
                 )
-                decision = self.strategy_runner.decide(pair, bars, bundle)
                 decisions[pair] = decision
                 self.journal.record_signal(
                     run_id,
@@ -198,12 +242,41 @@ class DailyRunner:
         contexts: dict[str, RiskContext] = {}
         risks: dict[str, RiskDecision] = {}
         try:
+            base_context = self.risk_context()
+            if base_context.account_currency != self.settings.account_currency:
+                raise ValueError("risk context account currency does not match config")
+            reserved_positions: dict[str, int] = {}
+            reserved_exposure: dict[str, float] = {}
             for pair, decision in decisions.items():
-                context = self.risk_context(pair)
-                if context.account_currency != self.settings.account_currency:
-                    raise ValueError(
-                        "risk context account currency does not match config"
+                exposure_delta = (
+                    {}
+                    if decision.direction == "flat"
+                    else _exposure_delta(
+                        pair, decision.direction, self.risk_limits.risk_per_trade
                     )
+                )
+                context = RiskContext(
+                    equity=base_context.equity,
+                    open_positions_by_pair={
+                        **base_context.open_positions_by_pair,
+                        **{
+                            key: base_context.open_positions_by_pair.get(key, 0) + value
+                            for key, value in reserved_positions.items()
+                        },
+                    },
+                    currency_exposure={
+                        **base_context.currency_exposure,
+                        **{
+                            key: base_context.currency_exposure.get(key, 0.0) + value
+                            for key, value in reserved_exposure.items()
+                        },
+                    },
+                    account_currency=base_context.account_currency,
+                    currency_to_account=base_context.currency_to_account,
+                    drawdown_pct=base_context.drawdown_pct,
+                    daily_loss_pct=base_context.daily_loss_pct,
+                    bundle_stale=base_context.bundle_stale,
+                )
                 contexts[pair] = context
                 if decision.direction == "flat":
                     risk = RiskDecision(False, ("NO_SIGNAL",), 0.0, 0.0)
@@ -213,12 +286,16 @@ class DailyRunner:
                         context,
                         pair=pair,
                         stop_distance=decision.stop_distance,
-                        currency_exposure_delta=_exposure_delta(
-                            pair, decision.direction, self.risk_limits.risk_per_trade
-                        ),
+                        currency_exposure_delta=exposure_delta,
                     )
                 risks[pair] = risk
                 self.journal.record_risk_decision(run_id, pair, risk)
+                if risk.allowed:
+                    reserved_positions[pair] = reserved_positions.get(pair, 0) + 1
+                    for currency, delta in exposure_delta.items():
+                        reserved_exposure[currency] = (
+                            reserved_exposure.get(currency, 0.0) + delta
+                        )
         except Exception:
             return self._halt(run_id, "RISK_DECISION_FAILED")
 

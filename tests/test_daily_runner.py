@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
@@ -33,9 +33,11 @@ class StubStrategy:
     def __init__(self, direction: str = "long") -> None:
         self.direction = direction
         self.calls = 0
+        self.bar_counts: list[int] = []
 
     def generate_signal(self, pair: str, bars: Sequence[D1Bar]) -> SignalIntent:
         self.calls += 1
+        self.bar_counts.append(len(bars))
         return SignalIntent(self.direction, 0.01, "stubbed PhaseAware output")
 
 
@@ -72,14 +74,21 @@ def _hourly_bars(run_date: date = RUN_DATE) -> tuple[H1Bar, ...]:
     )
 
 
-def _settings(*, execution_mode: str = "dry_run") -> Settings:
+def _settings(
+    *,
+    execution_mode: str = "dry_run",
+    pair_compositions: tuple[tuple[str, str], ...] = (("EUR_USD", "strategy-a"),),
+    max_positions_global: int = 3,
+) -> Settings:
+    pairs = tuple(pair for pair, _ in pair_compositions)
     return Settings(
         database_url="sqlite://",
         bundle_dir=FIXTURES,
         execution_mode=execution_mode,
         environment="demo" if execution_mode == "demo" else "dev",
-        pair_universe=("EUR_USD",),
-        pair_compositions=(("EUR_USD", "strategy-a"),),
+        pair_universe=pairs,
+        pair_compositions=pair_compositions,
+        max_positions_global=max_positions_global,
     )
 
 
@@ -87,29 +96,59 @@ def _runner(
     tmp_path: Path,
     *,
     execution_mode: str = "dry_run",
-    reconcile: object = lambda: True,
+    reconcile: Callable[[], bool] = lambda: True,
     bars: tuple[H1Bar, ...] | None = None,
     direction: str = "long",
     executor: StubExecutor | None = None,
     run_date: date = RUN_DATE,
     context: RiskContext | None = None,
+    pair_compositions: tuple[tuple[str, str], ...] = (("EUR_USD", "strategy-a"),),
+    max_positions_global: int = 3,
+    history: tuple[D1Bar, ...] | None = None,
 ) -> tuple[DailyRunner, JournalRepository, StubStrategy]:
     engine = create_engine("sqlite://")
     journal = JournalRepository(engine)
     journal.create_schema()
     strategy = StubStrategy(direction)
+    pairs = tuple(pair for pair, _ in pair_compositions)
     runner = DailyRunner(
-        settings=_settings(execution_mode=execution_mode),
+        settings=_settings(
+            execution_mode=execution_mode,
+            pair_compositions=pair_compositions,
+            max_positions_global=max_positions_global,
+        ),
         journal=journal,
         strategy_runner=StrategyRunner(
-            pair_compositions={"EUR_USD": "strategy-a"},
-            strategies={"strategy-a": strategy},
+            pair_compositions=dict(pair_compositions),
+            strategies={composition: strategy for _, composition in pair_compositions},
         ),
-        reconcile=reconcile,  # type: ignore[arg-type]
+        reconcile=reconcile,
         h1_provider=lambda _: {
-            "EUR_USD": bars if bars is not None else _hourly_bars(run_date)
+            pair: bars if bars is not None else _hourly_bars(run_date) for pair in pairs
         },
-        risk_context=lambda _: context or RiskContext(equity=10_000),
+        bar_history_provider=lambda _pair, _: (
+            history
+            if history is not None
+            else (
+                D1Bar(
+                    datetime.combine(run_date - timedelta(days=2), time.min, UTC),
+                    1,
+                    1.1,
+                    0.9,
+                    1,
+                    1,
+                ),
+                D1Bar(
+                    datetime.combine(run_date - timedelta(days=1), time.min, UTC),
+                    1,
+                    1.1,
+                    0.9,
+                    1,
+                    1,
+                ),
+            )
+        ),
+        risk_context=lambda: context or RiskContext(equity=10_000),
         executor=executor,
         lock=FileRunLock(tmp_path / "daily.lock"),
         bundle_loader=lambda: load_bundle(FIXTURES),
@@ -135,6 +174,7 @@ def test_daily_run_happy_path_is_journaled_and_idempotent(tmp_path: Path) -> Non
     assert first.summary["risk_allowed"] == {"EUR_USD": True}
     assert second.reasons == ("ALREADY_RUN",)
     assert strategy.calls == 1
+    assert strategy.bar_counts == [3]
     row = _run_row(journal._engine)
     assert row.status == "completed"
     assert len(row.config_hash) == 64
@@ -223,3 +263,46 @@ def test_demo_mode_does_not_handoff_risk_denied_signal(tmp_path: Path) -> None:
     assert result.status == "completed"
     assert result.summary["risk_allowed"] == {"EUR_USD": False}
     assert executor.orders == []
+
+
+def test_global_position_cap_reserves_earlier_pair_decisions(tmp_path: Path) -> None:
+    runner, _, _ = _runner(
+        tmp_path,
+        pair_compositions=(
+            ("EUR_USD", "strategy-a"),
+            ("GBP_USD", "strategy-b"),
+        ),
+        max_positions_global=1,
+    )
+
+    result = runner.run(RUN_DATE)
+
+    assert result.status == "completed"
+    assert result.summary["risk_allowed"] == {
+        "EUR_USD": True,
+        "GBP_USD": False,
+    }
+
+
+def test_stale_or_missing_daily_history_halts_before_strategy(tmp_path: Path) -> None:
+    stale_runner, _, stale_strategy = _runner(
+        tmp_path,
+        history=(
+            D1Bar(
+                datetime.combine(RUN_DATE - timedelta(days=9), time.min, UTC),
+                1,
+                1.1,
+                0.9,
+                1,
+                1,
+            ),
+        ),
+    )
+    stale = stale_runner.run(RUN_DATE)
+    assert stale.reasons == ("BAR_HISTORY_STALE",)
+    assert stale_strategy.calls == 0
+
+    missing_runner, _, missing_strategy = _runner(tmp_path / "missing", history=())
+    missing = missing_runner.run(RUN_DATE)
+    assert missing.reasons == ("BAR_HISTORY_INVALID",)
+    assert missing_strategy.calls == 0

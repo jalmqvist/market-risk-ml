@@ -35,6 +35,7 @@ class Settings:
     max_drawdown_pct: float = 0.20
     max_daily_loss_pct: float = 0.03
     bar_boundary_offset_hours: int = 1
+    max_bar_history_age_days: int = 7
 
     def __post_init__(self) -> None:
         """Validate values and raise ValueError for unsupported settings."""
@@ -107,6 +108,8 @@ class Settings:
             raise ValueError("MRML_MAX_DAILY_LOSS_PCT must be in (0, 1]")
         if not -23 <= self.bar_boundary_offset_hours <= 23:
             raise ValueError("MRML_BAR_BOUNDARY_OFFSET_HOURS must be in [-23, 23]")
+        if self.max_bar_history_age_days < 0:
+            raise ValueError("MRML_MAX_BAR_HISTORY_AGE_DAYS must be non-negative")
 
 
 def _bool_value(name: str, raw_value: str | None, default: bool) -> bool:
@@ -191,4 +194,5 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         bar_boundary_offset_hours=_int_value(
             values, "MRML_BAR_BOUNDARY_OFFSET_HOURS", 1
         ),
+        max_bar_history_age_days=_int_value(values, "MRML_MAX_BAR_HISTORY_AGE_DAYS", 7),
     )
