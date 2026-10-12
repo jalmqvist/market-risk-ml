@@ -95,7 +95,12 @@ class StrategyRunner:
         # Candidate rank is retained as provenance. It never determines whether
         # this configured strategy enters; the strategy's own signal does.
         strategy = self._strategies[composition]
-        intent = strategy.generate_signal(pair, bars)
+        raw_intent = strategy.generate_signal(pair, bars)
+        intent = SignalIntent(
+            direction=raw_intent.direction,
+            stop_distance=raw_intent.stop_distance,
+            rationale=raw_intent.rationale,
+        )
         return StrategyDecision(
             pair=pair,
             composition=composition,
