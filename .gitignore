@@ -151,6 +151,8 @@ activemq-data/
 
 # Environments
 .env
+.env.*
+!.env.example
 .envrc
 .venv
 env/
@@ -207,6 +209,19 @@ tempCodeRunnerFile.py
 
 # Ruff stuff:
 .ruff_cache/
+
+# Synthetic fixtures are intentionally committed; ignore other parquet data.
+*.parquet
+!tests/fixtures/*.parquet
+!tests/fixtures/**/*.parquet
+
+# Secret and local credential files
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
 
 # PyPI configuration file
 .pypirc
