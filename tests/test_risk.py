@@ -114,3 +114,22 @@ def test_invalid_currency_conversion_fails_closed_without_sizing(rate: float) ->
     assert not decision.allowed
     assert decision.units == 0
     assert "INVALID_CURRENCY_CONVERSION" in decision.reasons
+
+
+@pytest.mark.parametrize(
+    ("stop_distance", "rate"),
+    [(1e-200, 1e-200), (1e200, 1e200)],
+)
+def test_sizing_denominator_underflow_or_overflow_fails_closed(
+    stop_distance: float, rate: float
+) -> None:
+    decision = evaluate_trade(
+        RiskLimits(),
+        RiskContext(equity=10_000, currency_to_account={"GBP": rate}),
+        pair="EUR_GBP",
+        stop_distance=stop_distance,
+    )
+
+    assert not decision.allowed
+    assert decision.units == 0
+    assert "INVALID_SIZING_DENOMINATOR" in decision.reasons

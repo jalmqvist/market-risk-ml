@@ -138,16 +138,23 @@ def evaluate_trade(
         if math.isfinite(context.equity) and context.equity > 0
         else 0.0
     )
-    units = (
-        risk_amount / (stop_distance * conversion_rate)
+    sizing_denominator = (
+        stop_distance * conversion_rate
         if (
             stop_distance > 0
+            and math.isfinite(stop_distance)
             and conversion_rate is not None
             and math.isfinite(conversion_rate)
             and conversion_rate > 0
         )
         else 0.0
     )
+    if not math.isfinite(sizing_denominator) or sizing_denominator <= 0:
+        if "INVALID_STOP_DISTANCE" not in reasons:
+            reasons.append("INVALID_SIZING_DENOMINATOR")
+        units = 0.0
+    else:
+        units = risk_amount / sizing_denominator
     if not math.isfinite(units):
         reasons.append("INVALID_STOP_DISTANCE")
         units = 0.0
