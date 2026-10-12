@@ -186,8 +186,11 @@ class DailyRunner:
                     not history
                     or timestamps != tuple(sorted(timestamps))
                     or len(set(timestamps)) != len(timestamps)
+                    or len({timestamp.date() for timestamp in timestamps})
+                    != len(timestamps)
                     or any(
                         bar.timestamp.date() >= run_date
+                        or bar.timestamp.time() != time.min
                         or not all(
                             math.isfinite(value)
                             for value in (
@@ -198,6 +201,7 @@ class DailyRunner:
                                 bar.volume,
                             )
                         )
+                        or bar.volume < 0
                         or bar.low > min(bar.open, bar.close)
                         or bar.high < max(bar.open, bar.close)
                         or bar.low > bar.high

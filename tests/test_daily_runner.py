@@ -306,3 +306,23 @@ def test_stale_or_missing_daily_history_halts_before_strategy(tmp_path: Path) ->
     missing = missing_runner.run(RUN_DATE)
     assert missing.reasons == ("BAR_HISTORY_INVALID",)
     assert missing_strategy.calls == 0
+
+
+def test_malformed_daily_history_halts_before_strategy(tmp_path: Path) -> None:
+    malformed = (
+        D1Bar(
+            datetime.combine(RUN_DATE - timedelta(days=1), time.min, UTC)
+            + timedelta(hours=1),
+            1,
+            1.1,
+            0.9,
+            1,
+            1,
+        ),
+    )
+    runner, _, strategy = _runner(tmp_path, history=malformed)
+
+    result = runner.run(RUN_DATE)
+
+    assert result.reasons == ("BAR_HISTORY_INVALID",)
+    assert strategy.calls == 0
