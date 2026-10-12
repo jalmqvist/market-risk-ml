@@ -189,6 +189,10 @@ class DailyRunner:
                     or len({timestamp.date() for timestamp in timestamps})
                     != len(timestamps)
                     or any(
+                        later - earlier != timedelta(days=1)
+                        for earlier, later in zip(timestamps, timestamps[1:])
+                    )
+                    or any(
                         bar.timestamp.date() >= run_date
                         or bar.timestamp.time() != time.min
                         or not all(
