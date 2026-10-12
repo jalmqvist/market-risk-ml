@@ -151,6 +151,10 @@ class JournalRepository:
         slippage: float | None,
     ) -> None:
         with self._sessions() as session, session.begin():
+            if session.scalar(
+                select(Order).where(Order.id == order_id, Order.run_id == run_id)
+            ) is None:
+                raise ValueError("order does not belong to run")
             session.add(
                 Fill(
                     id=str(uuid4()),
