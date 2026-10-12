@@ -57,3 +57,16 @@ Buffer (Wk10) Overrun, bug fixes, documentation.
 - Mon: plan the week's PR slice. Fri: 20-minute review of what's merged,
   update this file.
 - Keep a "parking lot" section for ideas. Nothing enters a phase without displacing something.
+
+---
+
+# ROADMAP changes (2026-10-08, replaces Phases 2-5)
+PR4  OANDA client + H1->D1 builder; diff vs MPML bars on the overlap.
+PR5  RiskController (flat sizing, currency caps, kill switch, daily loss limit).
+PR6  StrategyRunner wrapping PhaseAware via MPML; replay parity vs MPML trade
+     artifacts (diff = 0). No state resolver.
+PR7-9 Order manager, reconciler, runner, deployment (unchanged).
+PR10 Monitoring: slippage vs assumed costs, daily parity check, per-pair report.
+Later (after A1/A3): alternative-composition bundles; sentiment ingest and
+shadow state logging; model-serving decision for the selector.
+Parallel MPML PR: provenance (dataset_version, data start/end, fingerprint).

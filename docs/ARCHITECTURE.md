@@ -144,3 +144,40 @@ data, non-FX instruments.
 - Slippage and spread per fill are measured and compared with MPML's assumed costs.
 - Every skipped trade has a logged reason.
 - No conclusions about edge until there are enough trades. Report trade counts, not just P&L.
+
+---
+
+# ARCHITECTURE v0.3 (2026-10-08): replaces sections 6, 8, 9, 10 and the ADR list
+
+## 6. Daily run (idempotent)
+1. Lock; create run row (config hash, bundle hash, code version).
+2. Reconcile broker positions/orders with the journal. Mismatch -> halt, alert.
+3. Seed/append D1 bars (MPML CSV history + OANDA H1->D1, MPML boundaries). Gap -> halt.
+4. Bundle checks: schema, counts, FK integrity. Evidence-end rule if configured.
+5. For each configured pair: run the configured PhaseAware composition via
+   MPML code (price-only; vol-guard threshold from the trailing training window).
+6. RiskController approves/rejects; journal every decision with a reason.
+7. Execute (demo only). Journal fills, slippage vs manifest costs.
+8. Snapshot equity, drawdown, exposure; send a run summary.
+
+## 8. State and recommendations (ADR-006)
+No live state resolution in v0. In MPML bundles, state_id labels which DL
+artifact fed the selector; it does not condition PhaseAware metrics.
+Pair set and composition are versioned config frozen before the first trade.
+Bundles supply provenance, parity targets and assumed costs.
+Behavioral/selector use requires new MPML evidence and live MSML inference
+(later stage).
+
+## 9. Bundle consumption
+Loader validates and exposes candidates(pair). Rank 1 is NOT a trading
+decision: it is a selection-biased comparison of PhaseAware vs selector.
+
+## 10. Rollout
+Stage A: PhaseAware TF4/MR42, 14 pairs, dry-run then OANDA demo.
+Stage B: alternative compositions from new bundles (config change only).
+Stage C: selector + behavioral features, only after model-serving design.
+
+## ADRs
+001 resolved (pair in metadata); 002 resolved (PhaseAware needs no XGBoost,
+confirm via replay); 003 deferred; 004 open (bar boundaries + OANDA vs
+broker_csv); 005 proposed; 006 accepted.
