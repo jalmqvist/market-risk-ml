@@ -16,6 +16,7 @@ def upgrade() -> None:
     Base.metadata.create_all(bind=op.get_bind())
 
 
+def downgrade() -> None:
     op.drop_table("config_snapshots")
     op.drop_table("fills")
     op.drop_table("orders")

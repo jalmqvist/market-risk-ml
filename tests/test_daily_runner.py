@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
@@ -268,6 +269,33 @@ def test_demo_mode_hands_off_only_risk_approved_order(tmp_path: Path) -> None:
         fill = session.scalar(select(Fill))
         assert fill is not None
         assert fill.run_id == result.run_id
+
+
+def test_demo_order_intent_is_journaled_before_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executor = StubExecutor()
+    runner, journal, _ = _runner(tmp_path, execution_mode="demo", executor=executor)
+
+    def fail_order_update(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("journal update failed")
+
+    monkeypatch.setattr(journal, "update_order", fail_order_update)
+
+    result = runner.run(RUN_DATE)
+
+    assert result.status == "halted"
+    assert len(executor.orders) == 1
+    with Session(journal._engine) as session:
+        order = session.scalar(select(Order))
+        assert order is not None
+        assert order.client_order_id == executor.orders[0]["client_order_id"]
+        assert order.status == "intent"
+        assert order.payload["request"] == {
+            "pair": "EUR_USD",
+            "direction": "long",
+            "units": executor.orders[0]["units"],
+        }
 
 
 def test_demo_mode_does_not_handoff_risk_denied_signal(tmp_path: Path) -> None:

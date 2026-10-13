@@ -197,7 +197,9 @@ class DailyRunner:
                     != len(timestamps)
                     or any(
                         later - earlier != timedelta(days=1)
-                        for earlier, later in zip(timestamps, timestamps[1:])
+                        for earlier, later in zip(
+                            timestamps, timestamps[1:], strict=False
+                        )
                     )
                     or any(
                         bar.timestamp.date() >= run_date
@@ -325,17 +327,28 @@ class DailyRunner:
                     return self._halt(run_id, "DEMO_EXECUTOR_UNAVAILABLE")
                 decision = decisions[pair]
                 order_id = _order_id(run_date, pair, decision)
+                request = {
+                    "pair": pair,
+                    "direction": decision.direction,
+                    "units": risk.units,
+                }
+                self.journal.record_order(
+                    run_id,
+                    client_order_id=order_id,
+                    status="intent",
+                    payload={"request": request},
+                )
                 payload = self.executor.submit(
                     client_order_id=order_id,
                     pair=pair,
                     direction=decision.direction,
                     units=risk.units,
                 )
-                self.journal.record_order(
+                self.journal.update_order(
                     run_id,
                     client_order_id=order_id,
                     status=payload.get("status", "submitted"),
-                    payload=payload,
+                    payload={"request": request, "response": payload},
                 )
                 submitted.append(order_id)
         except Exception:

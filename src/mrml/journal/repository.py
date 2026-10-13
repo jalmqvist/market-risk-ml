@@ -141,6 +141,26 @@ class JournalRepository:
                 )
             )
 
+    def update_order(
+        self,
+        run_id: str,
+        *,
+        client_order_id: str,
+        status: str,
+        payload: dict[str, Any],
+    ) -> None:
+        with self._sessions() as session, session.begin():
+            order = session.scalar(
+                select(Order).where(
+                    Order.run_id == run_id,
+                    Order.client_order_id == client_order_id,
+                )
+            )
+            if order is None:
+                raise ValueError("order intent does not belong to run")
+            order.status = status
+            order.payload = payload
+
     def record_fill(
         self,
         run_id: str,
@@ -151,9 +171,12 @@ class JournalRepository:
         slippage: float | None,
     ) -> None:
         with self._sessions() as session, session.begin():
-            if session.scalar(
-                select(Order).where(Order.id == order_id, Order.run_id == run_id)
-            ) is None:
+            if (
+                session.scalar(
+                    select(Order).where(Order.id == order_id, Order.run_id == run_id)
+                )
+                is None
+            ):
                 raise ValueError("order does not belong to run")
             session.add(
                 Fill(
