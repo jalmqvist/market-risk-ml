@@ -21,3 +21,4 @@ jobs:
       - run: ruff format --check .
       - run: mypy src
       - run: pytest
+      - run: pytest -m parity
