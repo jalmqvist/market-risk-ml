@@ -1,3 +1,6 @@
+/old/
+docs/prompts
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

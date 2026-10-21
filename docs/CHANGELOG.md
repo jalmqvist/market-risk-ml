@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Audited the canonical MPML standalone PhaseAware TF4+MR42 path and recorded
+  strategy timing, fold-local indicator behavior, and trade/accounting semantics.
+  Added the completed EURUSD fold-0 fixture with hash-pinned signals, execution
+  timeline, trades, accounting diagnostics, and metrics. Replaced the synthetic
+  parity stub with fixture-integrity/accounting checks and an opt-in exact replay
+  check against the pinned MPML checkout.
 - Added a practice-only OANDA H1 client with retries/timeouts, UTC+1 H1-to-D1
   aggregation, deterministic overlap diffs, and incomplete-bar rejection.
 - Added fixed-composition PhaseAware strategy adaptation, pure flat-sizing risk
@@ -13,9 +19,9 @@
   reject new entries rather than assuming parity.
 - Added historical D1 warmup validation and in-run reservation of position and
   currency limits across configured pairs.
-- Added offline runtime/risk/journal tests and a CI replay-parity stub; real
-  MPML strategy binding, broker reconciliation/order adapter, and historical
-  parity fixtures remain follow-ups.
+- Added offline runtime/risk/journal tests. Historical MPML replay-fixture
+  integrity is now covered; direct StrategyRunner binding to MPML remains a
+  separate integration step, as do broker reconciliation/order adapter work.
 
 ## 0.1.0 - 2026-10-12
 

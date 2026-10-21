@@ -1,0 +1,12 @@
+{
+  "initial_capital": 10000.0,
+  "n_trades": 9,
+  "sum_recorded_trade_pnl": 348.4269388662668,
+  "sum_entry_costs_deducted_separately": 7.104734293818441,
+  "equity_gain": 341.32220457244875,
+  "reconstructed_final_equity": 10341.322204572449,
+  "reported_final_equity": 10341.322204572449,
+  "final_equity_reconciliation_error": 0.0,
+  "max_abs_trade_pnl_reconstruction_error": 1.1652900866465643e-12,
+  "status": "pass"
+}

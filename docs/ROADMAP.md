@@ -9,6 +9,33 @@ docs/CHANGELOG.md.
 - PhaseAware-first operation from MPML bundles.
 - No live state resolution in v0; no selector model-serving in v0.
 
+## Current implementation status and integration sequence (2026-10-16)
+
+The changelog records the initial journal models/migrations, OANDA H1 client and
+bar builder, fixed-composition adapter protocol, and offline runtime tests as
+implemented. The EURUSD fold-0 PhaseAware fixture and its frozen reference
+outputs are now complete, with an opt-in canonical MPML replay test. The remaining
+integration gap is binding MRML to MPML without collapsing the batch-backtest and
+per-decision forward-test interfaces.
+
+The numbered PRs below retain their original **foundation-phase** meaning. The
+current MPML integration work uses a separate short sequence, documented in
+`MPML_MRML_PhaseAware_Investigation_Notes_2026-10-15.md`:
+
+1. **Audit — complete (2026-10-16):** trace the canonical standalone PhaseAware
+   path and record strategy/execution semantics.
+2. **Replay fixture — complete:** freeze one EURUSD fold from the canonical MPML
+   `PhaseAwareStrategy` + `Backtester` path, including signals, SL/TP, execution
+   timeline, trades, metrics, and accounting reconciliation. Hashes and provenance
+   are checked by `tests/test_replay_parity.py`; do not substitute the selector
+   portfolio timeline.
+3. **Integration PR2 — next:** bind MRML to the pinned MPML strategy implementation
+   and prove replay reproducibility without changing MRML risk/execution policy.
+4. **Integration PR3:** validate MRML H1→D1 aggregation against MPML on
+   overlapping historical bars and confirm boundary/missing-bar behavior.
+
+This sequence does not renumber or redefine the foundation PRs below.
+
 ## Week 0 (Thu Oct 8 - Fri Oct 9): unblock, don't build
 - Launch MPML runs on the server (A1 first, then A3/A2).
 - Decide initial candidate compositions for v0 bundle consumption.
@@ -19,7 +46,8 @@ docs/CHANGELOG.md.
 PR1 (Wk1)   Scaffold, config, CI, docker-compose Postgres, contracts + bundle
             loader against synthetic fixtures.
 PR2 (Wk1-2) Journal: SQLAlchemy models, Alembic migrations, repositories,
-            idempotency keys. Tests against real Postgres in CI.
+            idempotency keys. **Implemented in current baseline; real-Postgres CI
+            coverage should be confirmed separately if not already enabled.**
 PR3 (Wk2)   Bundle loader v2 against real MPML artifacts; harden semantics and
             staleness/evidence checks.
 
