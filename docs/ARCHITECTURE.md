@@ -1,4 +1,4 @@
-# MRML Architecture (v0.3 canonical, 2026-10-12)
+# MRML Architecture (v0.3 canonical, 2026-10-23)
 
 Supersedes prior planning drafts and the transitional v0.2 + amendment layout.
 
@@ -17,29 +17,40 @@ failure modes). It is not a proof of edge.
 
 1. Fail closed. Any missing, stale, or inconsistent input means no new trades.
 2. Trade what was tested. No execution path is introduced ad hoc in MRML.
-3. One source of strategy logic: MPML, imported as a pinned dependency.
-4. Everything is journaled: signals, risk decisions, orders, fills, state/shadow,
+3. One source of strategy logic: MPML, through a pinned and explicitly supported
+   runtime interface. Do not assume that a batch historical backtester is a
+   per-decision runtime API.
+4. Research artifacts and runtime code are distinct interfaces: Recommendations
+   and provenance are versioned research inputs; the strategy runtime supplies
+   current signals. Neither interface transfers walk-forward responsibility to MRML.
+5. Everything is journaled: signals, risk decisions, orders, fills, state/shadow,
    artifact versions, and config hash.
-5. Research datasets stay immutable. MRML never writes to them.
-6. Deterministic, replayable daily run. Same inputs give same decisions.
+6. Research datasets stay immutable. MRML never writes to them.
+7. Deterministic, replayable daily run. Same inputs give same decisions.
 
 ## 3. Two clocks
 
-SLOW (weeks): MPML walk-forward -> recommendations artifacts + manifest
-(versioned bundle with provenance and parity targets).
+SLOW (weeks/offline): MPML performs research and walk-forward evaluation,
+then exports Recommendation and manifest/provenance artifacts.
 
-FAST (daily, after D1 close): MRML runner
-fetch/construct bars -> bundle checks -> strategy decision -> risk -> execute -> journal.
+FAST (daily, after D1 close): MRML validates the frozen bundle/configuration,
+constructs broker-derived D1 **price bars**, obtains a current signal through the
+supported pinned MPML strategy-runtime interface, applies MRML risk controls,
+executes if approved, and journals the result.
 
-A recommendation bundle is a slow prior. MRML never re-runs walk-forward.
+A Recommendation bundle is a versioned research input and slow prior. MRML never
+runs walk-forward evaluation, training, strategy ranking, or Recommendation
+generation. The daily runtime must not invoke MPML's historical Backtester.
 
 ## 4. Components
 
 - contracts: typed MPML artifact schemas, bundle loader, validation.
 - data: OANDA client (thin, requests-based), bar builder (H1->D1 with
   MPML-identical boundaries), optional research feeds.
-- strategy: StrategyRunner interface wrapping MPML strategy classes
-  (PhaseAware-first in v0).
+- strategy: StrategyRunner adapter for a pinned, supported MPML causal
+  strategy-runtime interface (PhaseAware-first in v0). Its contract must be
+  distinguished from MPML's batch historical `Backtester`; if MPML does not
+  expose a suitable runtime entry point, define that contract before binding it.
 - risk: RiskController (pure functions, no I/O).
 - execution: order manager (idempotent), reconciler.
 - journal: Postgres repositories + migrations.
@@ -61,11 +72,14 @@ Rules:
 
 1. Lock; create run row (config hash, bundle hash, code version).
 2. Reconcile broker positions/orders with the journal. Mismatch -> halt, alert.
-3. Seed/append D1 bars (MPML CSV history + OANDA H1->D1, MPML boundaries).
-   Gap or late data -> halt.
-4. Bundle checks: schema, counts, FK integrity, provenance, evidence-end rule if configured.
-5. For each configured pair: run the configured PhaseAware composition via MPML code
-   (price-only; any volatility guard taken from the trailing training-window definition).
+3. Seed/append D1 price bars from approved historical data and broker H1→D1
+   aggregation using the agreed MPML-compatible day boundaries. Gaps, incomplete
+   bars, or late data that violate policy -> halt.
+4. Validate bundle and configuration: schema, counts, referential integrity,
+   provenance, and any configured evidence-end rule.
+5. For each configured pair, obtain the current signal from the supported MPML
+   PhaseAware runtime interface using only data available at the decision time.
+   Do not run walk-forward evaluation or the historical Backtester.
 6. RiskController approves/rejects; journal every decision with reason.
 7. Execute (demo only until explicitly changed). Journal fills and slippage vs manifest costs.
 8. Snapshot equity, drawdown, exposure; send run summary.
@@ -98,7 +112,10 @@ Therefore in v0:
 
 ## 9. Bundle consumption
 
-Bundle artifacts are loaded and validated by contracts.
+Research bundle artifacts are loaded and validated by contracts. The public
+research-artifact interface is MPML's Recommendation plus the associated
+manifest/provenance and bundle contents; `StrategyEvaluation` remains MPML's
+canonical historical evidence layer.
 
 MRML enforces guarantees including:
 - unique IDs
@@ -107,7 +124,9 @@ MRML enforces guarantees including:
 - count/provenance consistency
 
 Rank-1 is not, by itself, a trading decision. It is interpreted in context of
-selection methodology and parity evidence.
+selection methodology and parity evidence. The research-artifact interface is
+separate from the pinned strategy-runtime interface used to obtain a current
+signal. Neither permits MRML to rerun evaluation or independently rank strategies.
 
 ## 10. Rollout
 
@@ -118,8 +137,12 @@ selection methodology and parity evidence.
 
 ## 11. Non-goals (v0)
 
-Dashboards, multi-user, Java service, intraday execution, live ANN inference,
-state-conditional sizing, broker-2-dependent runtime logic, non-FX instruments.
+MRML does not run MPML walk-forward evaluation, train models, rank strategies,
+generate Recommendations, or execute the historical Backtester in the daily
+loop. MRML does not reproduce MPML's H1→D1 behavioral-prediction aggregation.
+Other non-goals include dashboards, multi-user, Java service, intraday execution,
+live ANN inference, state-conditional sizing, broker-2-dependent runtime logic,
+and non-FX instruments.
 
 ## 12. ADR status map
 
@@ -133,8 +156,14 @@ state-conditional sizing, broker-2-dependent runtime logic, non-FX instruments.
 ## 13. Success criteria for v0 forward test
 
 - Zero unreconciled broker/journal mismatches.
-- Replay parity: MRML signals reproduce MPML trade artifacts on identical historical bars (diff = 0).
-- Live demo signals on day N match dry-run recompute on same bars.
+- Historical replay baseline: the frozen canonical MPML fixture reproduces its
+  hash-pinned signals, execution timeline, trades, diagnostics, and metrics.
+- Runtime parity: after the runtime contract is established, MRML's per-decision
+  signals match the agreed canonical MPML signal fixtures on identical available
+  history; historical batch replay alone does not satisfy this criterion.
+- Market-bar parity: after H1→D1 validation, MRML price bars match MPML's
+  agreed D1 boundary and aggregation convention on overlapping data.
+- Live demo signals on day N match dry-run recompute on the same bars.
 - Slippage and spread per fill are measured and compared with MPML assumed costs.
 - Every skipped trade has a logged reason.
 - No conclusions about edge until sufficient sample size; report trade counts and quality diagnostics,
