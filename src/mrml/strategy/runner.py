@@ -25,7 +25,7 @@ class SignalIntent:
 
 
 class PhaseAwareStrategy(Protocol):
-    """Adapter contract implemented by the pinned MPML PhaseAware strategy."""
+    """Injected strategy seam; it is not a binding to MPML's runtime API."""
 
     def generate_signal(self, pair: str, bars: Sequence[D1Bar]) -> SignalIntent: ...
 

@@ -102,6 +102,17 @@ bounded-window or incremental-state optimization after parity tests
 demonstrate equivalence. Invalid, stale, unordered, duplicated, or
 insufficient history must fail closed.
 
+**Implementation status (2026-10-30):** MRML contains a tested boundary
+for validating explicitly attested completed bars, caller-supplied
+canonical fields, cutoff, and typed runtime output. It is not bound to
+MPML and is not wired into `DailyRunner`. The boundary preserves the
+canonical numeric signal without mapping it to an MRML trade direction;
+a result is available no earlier than its decision cutoff, while order
+execution timing remains a separate contract. The exact upstream
+feature-preparation path, warm-up requirements, and a supported causal
+MPML entry point remain unverified because the pinned MPML checkout was
+unavailable.
+
 ## 5. Data model (Postgres operational store)
 
 Tables: artifact_bundles, runs, bars_h1, bars_d1 (derived),
