@@ -80,9 +80,9 @@ MPML-independent, fail-closed interface boundary are implemented. The
 exact pinned MPML checkout was not present, so its source was not
 inspected in this task and no canonical runtime is bound. The boundary
 is not wired into `DailyRunner`; it validates ordered bars with explicit
-completion attestations, caller-supplied canonical fields (including
-`phase`), cutoff, and reported decision provenance, but does not
-calculate MPML features, indicators, or signals. Current-decision and
+completion attestations, an OHLCV-only input, cutoff, and reported
+decision provenance. MRML supplies no phase or other prepared field and
+does not calculate MPML features, indicators, or signals. Current-decision and
 prefix parity remain blocked pending MPML source/interface evidence.
 
 The offline baseline was run in the repository virtual environment:

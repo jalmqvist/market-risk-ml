@@ -4,22 +4,16 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from numbers import Real
-from types import MappingProxyType
 from typing import Protocol
 
 from mrml.data.bars import D1Bar
 
 PINNED_MPML_REVISION = "90d8ea733b4a7fad1ebca8df95f6554bb3ae6e3d"
 PHASEAWARE_V0_COMPOSITION = "PhaseAware_TF4_MR42"
-_FORWARD_LABELS = {
-    "next_return",
-    "next_direction",
-    "next_direction_binary",
-}
 _PAIR_PATTERN = re.compile(r"[A-Z]{3}_[A-Z]{3}")
 
 
@@ -55,20 +49,19 @@ def _finite_number(value: object) -> bool:
 
 
 @dataclass(frozen=True)
-class PreparedPhaseAwareHistory:
-    """Completed price bars and caller-supplied canonical MPML input fields.
+class CompletedD1History:
+    """Validated, completed D1 OHLCV history for an MPML-owned runtime.
 
-    The ``phase`` field is required because the audited PhaseAware input
-    includes it. Other MPML-prepared fields are preserved without MRML
-    calculating or interpreting them. Completion is an explicit upstream
-    attestation because ``D1Bar`` itself has no completion flag.
+    MRML supplies only OHLCV bars. Indicators, phases, and any other
+    preparation are calculated by the MPML runtime, so no derived or
+    forward-looking field can be passed through this contract. Completion is
+    an explicit upstream attestation because ``D1Bar`` has no completion flag.
     """
 
     pair: str
     decision_cutoff: datetime
     bars: tuple[D1Bar, ...]
     bar_completed: Sequence[bool]
-    canonical_fields: Mapping[str, Sequence[object]]
 
     def __post_init__(self) -> None:
         if not isinstance(self.pair, str) or _PAIR_PATTERN.fullmatch(self.pair) is None:
@@ -132,45 +125,9 @@ class PreparedPhaseAwareHistory:
             )
             prior_timestamp = timestamp
 
-        if not isinstance(self.canonical_fields, Mapping):
-            raise InvalidStrategyHistory("canonical_fields must be a mapping")
-        fields: dict[str, tuple[object, ...]] = {}
-        for name, values in self.canonical_fields.items():
-            if not isinstance(name, str) or not name.strip():
-                raise InvalidStrategyHistory("canonical field names must be non-empty")
-            if name.strip().casefold() in _FORWARD_LABELS:
-                raise InvalidStrategyHistory(
-                    f"forward-looking field {name!r} is not a runtime input"
-                )
-            if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
-                raise InvalidStrategyHistory(
-                    f"canonical field {name!r} must contain one value per bar"
-                )
-            column = tuple(values)
-            if len(column) != len(normalized_bars):
-                raise InvalidStrategyHistory(
-                    f"canonical field {name!r} does not align with history"
-                )
-            if not all(
-                (isinstance(value, str) and bool(value.strip()))
-                or _finite_number(value)
-                for value in column
-            ):
-                raise InvalidStrategyHistory(
-                    f"canonical field {name!r} contains an invalid value"
-                )
-            fields[name] = column
-
-        phases = fields.get("phase")
-        if phases is None or not all(isinstance(value, str) for value in phases):
-            raise InvalidStrategyHistory(
-                "canonical_fields must include a string phase for every bar"
-            )
-
         object.__setattr__(self, "decision_cutoff", cutoff)
         object.__setattr__(self, "bars", tuple(normalized_bars))
         object.__setattr__(self, "bar_completed", completion)
-        object.__setattr__(self, "canonical_fields", MappingProxyType(fields))
 
 
 @dataclass(frozen=True)
@@ -235,9 +192,7 @@ class PhaseAwareDecision:
 class CanonicalPhaseAwareRuntime(Protocol):
     """Expected contract for an MPML-owned runtime implementation."""
 
-    def latest_decision(
-        self, history: PreparedPhaseAwareHistory
-    ) -> PhaseAwareDecision: ...
+    def latest_decision(self, history: CompletedD1History) -> PhaseAwareDecision: ...
 
 
 class PhaseAwareDecisionAdapter:
@@ -255,16 +210,14 @@ class PhaseAwareDecisionAdapter:
         bars: Sequence[D1Bar],
         bar_completed: Sequence[bool],
         decision_cutoff: datetime,
-        canonical_fields: Mapping[str, Sequence[object]],
     ) -> PhaseAwareDecision:
         if isinstance(bars, (str, bytes)) or not isinstance(bars, Sequence):
             raise InvalidStrategyHistory("bars must be a sequence of D1Bar values")
-        history = PreparedPhaseAwareHistory(
+        history = CompletedD1History(
             pair=pair,
             decision_cutoff=decision_cutoff,
             bars=tuple(bars),
             bar_completed=bar_completed,
-            canonical_fields=canonical_fields,
         )
         result = self._runtime.latest_decision(history)
         if not isinstance(result, PhaseAwareDecision):

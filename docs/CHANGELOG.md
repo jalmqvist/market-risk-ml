@@ -3,8 +3,8 @@
 ## Unreleased
 
 -   Added a tested MRML PhaseAware decision boundary that validates
-    ordered completed-bar history, canonical input fields, cutoff, and
-    pinned result provenance without implementing MPML strategy logic.
+    ordered completed OHLCV history (no caller-supplied phase or prepared
+    fields), cutoff, and pinned result provenance without implementing MPML strategy logic.
     The pinned MPML checkout was unavailable, so no current runtime is
     bound and current-decision parity remains unverified. Recorded the
     offline scaffold baseline and existing lint/format failures in the

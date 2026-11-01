@@ -92,9 +92,11 @@ validates its bundle evidence. Candidate ranks are retained for
 provenance but are not entry signals. This scaffold does not supply or
 bind a canonical MPML implementation. The separate
 `PhaseAwareDecisionAdapter` validates explicitly attested completed-bar
-history, required phase input, cutoff, and typed MPML result provenance;
-it neither prepares MPML features nor maps a raw signal into an order
-direction.
+OHLCV-only history, cutoff, and typed MPML result provenance. MRML supplies
+no phase, indicator, or other prepared field: preparation, phase
+detection, and the TF4/MR42 decision belong to the planned MPML-owned
+`latest_decision(history)` runtime. The adapter does not map a raw
+signal into an order direction.
 Canonical current-decision parity is not established. No selector or
 live state resolver is part of this runtime.
 

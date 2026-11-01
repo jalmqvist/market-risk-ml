@@ -103,8 +103,9 @@ demonstrate equivalence. Invalid, stale, unordered, duplicated, or
 insufficient history must fail closed.
 
 **Implementation status (2026-10-30):** MRML contains a tested boundary
-for validating explicitly attested completed bars, caller-supplied
-canonical fields, cutoff, and typed runtime output. It is not bound to
+for validating explicitly attested completed OHLCV bars, cutoff, and
+typed runtime output. MRML supplies no phase or other prepared field;
+those belong to the MPML-owned runtime. It is not bound to
 MPML and is not wired into `DailyRunner`. The boundary preserves the
 canonical numeric signal without mapping it to an MRML trade direction;
 a result is available no earlier than its decision cutoff, while order

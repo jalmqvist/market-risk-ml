@@ -12,12 +12,12 @@ from mrml.data.bars import D1Bar
 from mrml.strategy.runtime import (
     PHASEAWARE_V0_COMPOSITION,
     PINNED_MPML_REVISION,
+    CompletedD1History,
     InsufficientStrategyHistory,
     InvalidStrategyHistory,
     InvalidStrategyOutput,
     PhaseAwareDecision,
     PhaseAwareDecisionAdapter,
-    PreparedPhaseAwareHistory,
 )
 
 
@@ -36,24 +36,14 @@ def _bars(count: int) -> tuple[D1Bar, ...]:
     )
 
 
-def _fields(count: int) -> dict[str, tuple[object, ...]]:
-    return {
-        "phase": ("LV_Ranging",) * count,
-        "adx": (18.0,) * count,
-        "atr": (0.01,) * count,
-    }
-
-
-def _decision(
-    history: PreparedPhaseAwareHistory, **overrides: Any
-) -> PhaseAwareDecision:
+def _decision(history: CompletedD1History, **overrides: Any) -> PhaseAwareDecision:
     values: dict[str, object] = {
         "pair": history.pair,
         "signal_bar_timestamp": history.bars[-1].timestamp,
         "decision_cutoff": history.decision_cutoff,
         "actionable_after": history.decision_cutoff,
         "canonical_signal": 0.75,
-        "phase": history.canonical_fields["phase"][-1],
+        "phase": "LV_Ranging",
         "stop_loss_pct": 0.025,
         "take_profit_pct": 0.0125,
         "composition": PHASEAWARE_V0_COMPOSITION,
@@ -67,12 +57,12 @@ def _decision(
 class FixedRuntime:
     def __init__(
         self,
-        result: Callable[[PreparedPhaseAwareHistory], object] | None = None,
+        result: Callable[[CompletedD1History], object] | None = None,
     ) -> None:
-        self.histories: list[PreparedPhaseAwareHistory] = []
+        self.histories: list[CompletedD1History] = []
         self.result = result
 
-    def latest_decision(self, history: PreparedPhaseAwareHistory) -> object:
+    def latest_decision(self, history: CompletedD1History) -> object:
         self.histories.append(history)
         if self.result is not None:
             return self.result(history)
@@ -83,7 +73,6 @@ def _call(
     runtime: FixedRuntime,
     bars: tuple[D1Bar, ...] | None = None,
     *,
-    fields: dict[str, tuple[object, ...]] | None = None,
     cutoff: datetime | None = None,
     bar_completed: tuple[bool, ...] | None = None,
 ) -> PhaseAwareDecision:
@@ -95,7 +84,6 @@ def _call(
             (True,) * len(selected_bars) if bar_completed is None else bar_completed
         ),
         decision_cutoff=cutoff or selected_bars[-1].timestamp + timedelta(days=1),
-        canonical_fields=(_fields(len(selected_bars)) if fields is None else fields),
     )
 
 
@@ -132,7 +120,6 @@ def test_boundary_passes_only_each_validated_cutoff_prefix() -> None:
             bars=prefix,
             bar_completed=(True,) * len(prefix),
             decision_cutoff=prefix[-1].timestamp + timedelta(days=1),
-            canonical_fields=_fields(len(prefix)),
         )
         lengths_seen.append(len(runtime.histories[-1].bars))
         assert result.signal_bar_timestamp == prefix[-1].timestamp
@@ -143,58 +130,30 @@ def test_boundary_passes_only_each_validated_cutoff_prefix() -> None:
 
 
 @pytest.mark.parametrize(
-    ("bars", "fields", "cutoff", "error", "message"),
+    ("bars", "cutoff", "error", "message"),
     [
         (
             (),
-            {},
             datetime(2026, 2, 1, tzinfo=UTC),
             InsufficientStrategyHistory,
             "at least one",
         ),
         (
             _bars(2),
-            {},
-            datetime(2026, 1, 4, tzinfo=UTC),
-            InvalidStrategyHistory,
-            "phase",
-        ),
-        (
-            _bars(2),
-            {"phase": ("LV_Ranging",)},
-            datetime(2026, 1, 4, tzinfo=UTC),
-            InvalidStrategyHistory,
-            "does not align",
-        ),
-        (
-            _bars(2),
-            {"phase": ("LV_Ranging", "LV_Ranging"), "adx": (18.0, float("nan"))},
-            datetime(2026, 1, 4, tzinfo=UTC),
-            InvalidStrategyHistory,
-            "invalid value",
-        ),
-        (
-            _bars(2),
-            {
-                "phase": ("LV_Ranging", "LV_Ranging"),
-                "next_return": (0.01, 0.02),
-            },
-            datetime(2026, 1, 4, tzinfo=UTC),
-            InvalidStrategyHistory,
-            "forward-looking",
-        ),
-        (
-            _bars(2),
-            {"phase": ("LV_Ranging", "LV_Ranging")},
             datetime(2026, 1, 3),
             InvalidStrategyHistory,
             "timezone-aware",
+        ),
+        (
+            _bars(2),
+            _bars(2)[-1].timestamp,
+            InvalidStrategyHistory,
+            "at or after decision_cutoff",
         ),
     ],
 )
 def test_history_contract_rejects_missing_or_invalid_inputs(
     bars: tuple[D1Bar, ...],
-    fields: dict[str, tuple[object, ...]],
     cutoff: datetime,
     error: type[ValueError],
     message: str,
@@ -202,7 +161,22 @@ def test_history_contract_rejects_missing_or_invalid_inputs(
     runtime = FixedRuntime()
 
     with pytest.raises(error, match=message):
-        _call(runtime, bars, fields=fields, cutoff=cutoff)
+        _call(runtime, bars, cutoff=cutoff)
+
+    assert runtime.histories == []
+
+
+def test_history_contract_has_no_caller_supplied_prepared_fields() -> None:
+    runtime = FixedRuntime()
+
+    with pytest.raises(TypeError):
+        PhaseAwareDecisionAdapter(runtime).decide(  # type: ignore[call-arg]
+            pair="EUR_USD",
+            bars=_bars(2),
+            bar_completed=(True, True),
+            decision_cutoff=datetime(2026, 1, 4, tzinfo=UTC),
+            canonical_fields={"phase": ("LV_Ranging", "LV_Ranging")},
+        )
 
     assert runtime.histories == []
 
@@ -308,7 +282,7 @@ def test_adapter_rejects_unexpected_runtime_output(bad_result: object) -> None:
 def test_adapter_rejects_mismatched_runtime_metadata(
     field: str, value: object, message: str
 ) -> None:
-    def mismatched_result(history: PreparedPhaseAwareHistory) -> PhaseAwareDecision:
+    def mismatched_result(history: CompletedD1History) -> PhaseAwareDecision:
         overrides = {field: value}
         if field == "decision_cutoff":
             overrides["actionable_after"] = value
@@ -334,12 +308,11 @@ def test_adapter_rejects_mismatched_runtime_metadata(
 def test_decision_contract_rejects_invalid_canonical_values(
     field: str, value: object, message: str
 ) -> None:
-    history = PreparedPhaseAwareHistory(
+    history = CompletedD1History(
         "EUR_USD",
         datetime(2026, 1, 4, tzinfo=UTC),
         _bars(3),
         (True, True, True),
-        _fields(3),
     )
 
     with pytest.raises(InvalidStrategyOutput, match=message):

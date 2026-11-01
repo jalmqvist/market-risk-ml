@@ -10,12 +10,12 @@ from mrml.strategy.runtime import (
     PHASEAWARE_V0_COMPOSITION,
     PINNED_MPML_REVISION,
     CanonicalPhaseAwareRuntime,
+    CompletedD1History,
     InsufficientStrategyHistory,
     InvalidStrategyHistory,
     InvalidStrategyOutput,
     PhaseAwareDecision,
     PhaseAwareDecisionAdapter,
-    PreparedPhaseAwareHistory,
 )
 
 __all__ = [
@@ -28,7 +28,7 @@ __all__ = [
     "PhaseAwareDecision",
     "PhaseAwareDecisionAdapter",
     "PhaseAwareStrategy",
-    "PreparedPhaseAwareHistory",
+    "CompletedD1History",
     "SignalIntent",
     "StrategyDecision",
     "StrategyRunner",
