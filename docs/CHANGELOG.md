@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+-   Added a tested MRML PhaseAware decision boundary that validates
+    ordered completed OHLCV history (no caller-supplied phase or prepared
+    fields), cutoff, and pinned result provenance without implementing MPML strategy logic.
+    The pinned MPML checkout was unavailable, so no current runtime is
+    bound and current-decision parity remains unverified. Recorded the
+    offline scaffold baseline and existing lint/format failures in the
+    PR2 roadmap status.
 -   Incorporated ADRs.md into the PR2 documentation update. Clarified
     that ADR-006 continues to defer selector/state serving for v0 and
     added proposed ADR-007 for the causal PhaseAware runtime interface,

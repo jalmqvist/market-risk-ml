@@ -1,10 +1,11 @@
 # MRML
 
 MRML is the execution and risk layer in the BSVE → MSML → MPML → MRML
-research pipeline. The v0 baseline provides a practice-only OANDA
-market-data client, H1-to-D1 aggregation, configured PhaseAware strategy
-adapter, pure risk gates, daily orchestration, and an operational
-journal. The runtime is a forward-test harness; it has no live-capital
+research pipeline. The v0 scaffold provides a practice-only OANDA
+market-data client, H1-to-D1 aggregation, a strategy-runner scaffold,
+pure risk gates, daily orchestration, and an operational journal. Its
+PhaseAware decision boundary is not yet bound to a canonical MPML
+runtime. The runtime is a forward-test harness; it has no live-capital
 support and no live state resolver.
 
 ## Setup
@@ -86,11 +87,18 @@ time; never commit it. `build_d1_bars()` uses fixed UTC+1 boundaries by
 default and rejects incomplete days/candles. `compare_bars()` returns
 deterministic diffs for overlapping timestamps.
 
-`StrategyRunner` invokes the configured PhaseAware strategy
-implementation through an adapter protocol and validates its bundle
-evidence. Candidate ranks are retained for provenance but are not entry
-signals. The strategy implementation must be supplied by the pinned MPML
-integration; no selector or live state resolver is part of this runtime.
+`StrategyRunner` invokes an injected PhaseAware strategy protocol and
+validates its bundle evidence. Candidate ranks are retained for
+provenance but are not entry signals. This scaffold does not supply or
+bind a canonical MPML implementation. The separate
+`PhaseAwareDecisionAdapter` validates explicitly attested completed-bar
+OHLCV-only history, cutoff, and typed MPML result provenance. MRML supplies
+no phase, indicator, or other prepared field: preparation, phase
+detection, and the TF4/MR42 decision belong to the planned MPML-owned
+`latest_decision(history)` runtime. The adapter does not map a raw
+signal into an order direction.
+Canonical current-decision parity is not established. No selector or
+live state resolver is part of this runtime.
 
 `DailyRunner` requires reconciliation, complete current H1 data, a fresh
 historical D1 series (normally seeded from MPML CSV history), a current
@@ -108,11 +116,11 @@ errors and missing or inconsistent inputs halt the run.
 The frozen EURUSD historical replay fixture is hash-pinned and can be
 checked against the pinned MPML checkout with the opt-in parity test.
 This establishes historical replay reproducibility, not per-decision
-runtime parity. Integration PR2 remains responsible for binding
-StrategyRunner to a supported MPML-owned causal decision interface and
-adding prefix-based signal-parity tests; PR3 separately validates
-H1-to-D1 price-bar construction. See [the PR2 implementation brief in
-the
+runtime parity. The MRML-side PR2 boundary is implemented, but binding
+it to a supported MPML-owned causal interface and adding canonical
+prefix-parity tests remain blocked on MPML source/interface evidence.
+PR3 separately validates H1-to-D1 price-bar construction. See [the PR2
+implementation brief in the
 roadmap](docs/ROADMAP.md#integration-pr2--establish-and-bind-the-mpml-strategy-runtime-interface).
 
 Recommendation metadata currently supports schema version `1.0`. The

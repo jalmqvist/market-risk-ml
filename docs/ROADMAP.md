@@ -65,7 +65,7 @@ implemented; MRML must not silently duplicate strategy rules.
 
 ### Integration PR2 --- Establish and bind the MPML strategy-runtime interface
 
-**Status at 2026-10-29:** historical replay parity is established for
+**Historical evidence:** historical replay parity is established for
 the frozen EURUSD fixture at the pinned MPML revision. The opt-in parity
 test was run in a detached worktree at MPML commit
 `90d8ea733b4a7fad1ebca8df95f6554bb3ae6e3d` and passed
@@ -74,6 +74,50 @@ checkout was reported byte-identical, but the pinned-revision run
 remains the canonical historical regression check. This proves
 historical fixture reproducibility; it does **not** prove per-decision
 runtime parity.
+
+**MRML PR2 status at 2026-10-30:** the scaffold audit and an
+MPML-independent, fail-closed interface boundary are implemented. The
+exact pinned MPML checkout was not present, so its source was not
+inspected in this task and no canonical runtime is bound. The boundary
+is not wired into `DailyRunner`; it validates ordered bars with explicit
+completion attestations, an OHLCV-only input, cutoff, and reported
+decision provenance. MRML supplies no phase or other prepared field and
+does not calculate MPML features, indicators, or signals. Current-decision and
+prefix parity remain blocked pending MPML source/interface evidence.
+
+The offline baseline was run in the repository virtual environment:
+`make test` passed (`68 passed, 1 skipped`); the skip is canonical
+historical replay because `MPML_ROOT` was not set. `pytest -m parity -q`
+reported `1 skipped, 68 deselected`. `mypy src` passed. Baseline
+`ruff check .` reported 16 existing `E501` violations in the replay
+exporter and replay parity test; `ruff format --check .` reported those
+same two existing files unformatted. No application startup command is
+declared; configuration requires `MRML_DATABASE_URL`, and actual
+broker/database services were not exercised. Tests use offline stubs
+and local SQLite only.
+
+The exercised scaffold components are the contracts/configuration,
+price-bar transformations, pure risk gates, injected daily/strategy
+orchestration, and journal schema tests on temporary SQLite. OANDA
+requests are mocked; no credentialed service is called. The application
+has no declared CLI/startup entry point, and the daily runner requires
+injected market-data, reconciliation, risk-context, journal, bundle,
+and strategy implementations.
+
+After adding the boundary, `make test` passed (`92 passed, 1 skipped`);
+`tests/test_strategy_runtime.py` passed all 24 interface tests and the
+fixture test module reported `2 passed, 1 skipped`. `pytest -m parity -q`
+reported `1 skipped, 92 deselected`, so canonical historical replay was
+not run. The new and directly affected Python files pass Ruff lint and
+format checks, and `mypy src` passes. Full-repository Ruff continues to
+report only the same 16 baseline `E501` violations.
+
+The remaining source-dependent evidence is the pinned MPML preparation
+and PhaseAware call path, its exact required fields and warm-up
+behavior, output/signal semantics, and a supported causal per-decision
+entry point independent of the historical `Backtester`. Until supplied,
+the runtime boundary must not be treated as an actionable strategy
+binding or as evidence of parity.
 
 **Motivation:** MRML needs current signals from the same canonical
 strategy logic that MPML evaluates. Source inspection identified the

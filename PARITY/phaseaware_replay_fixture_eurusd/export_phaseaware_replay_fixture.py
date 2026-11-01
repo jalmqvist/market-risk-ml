@@ -6,6 +6,7 @@ implementation. The input CSV is the frozen, one-fold D1 fixture; this script
 intentionally does not recalculate phases or precompute strategy indicators on
 full history.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -125,42 +126,49 @@ def main() -> None:
         recorded_trade_pnl = float(trade.pnl)
         pnl_pct = float(trade.pnl_pct)
         size_multiplier = float(trade.size_multiplier)
-        reconstructed_trade_pnl = (
-            capital_after_entry_cost * pnl_pct * size_multiplier
-        )
+        reconstructed_trade_pnl = capital_after_entry_cost * pnl_pct * size_multiplier
         pnl_reconciliation_error = reconstructed_trade_pnl - recorded_trade_pnl
         capital_after_exit = capital_after_entry_cost + recorded_trade_pnl
-        accounting_rows.append({
-            "trade_index": trade_index,
-            "entry_date": trade.entry_date,
-            "exit_date": trade.exit_date,
-            "direction": trade.direction,
-            "entry_price": entry_price,
-            "entry_cost_fraction": entry_cost_fraction,
-            "capital_before_entry": capital_before_entry,
-            "entry_cost_amount": entry_cost_amount,
-            "capital_after_entry_cost": capital_after_entry_cost,
-            "pnl_pct": pnl_pct,
-            "size_multiplier": size_multiplier,
-            "recorded_trade_pnl": recorded_trade_pnl,
-            "reconstructed_trade_pnl": reconstructed_trade_pnl,
-            "pnl_reconciliation_error": pnl_reconciliation_error,
-            "capital_after_exit": capital_after_exit,
-            "exit_reason": trade.exit_reason,
-        })
+        accounting_rows.append(
+            {
+                "trade_index": trade_index,
+                "entry_date": trade.entry_date,
+                "exit_date": trade.exit_date,
+                "direction": trade.direction,
+                "entry_price": entry_price,
+                "entry_cost_fraction": entry_cost_fraction,
+                "capital_before_entry": capital_before_entry,
+                "entry_cost_amount": entry_cost_amount,
+                "capital_after_entry_cost": capital_after_entry_cost,
+                "pnl_pct": pnl_pct,
+                "size_multiplier": size_multiplier,
+                "recorded_trade_pnl": recorded_trade_pnl,
+                "reconstructed_trade_pnl": reconstructed_trade_pnl,
+                "pnl_reconciliation_error": pnl_reconciliation_error,
+                "capital_after_exit": capital_after_exit,
+                "exit_reason": trade.exit_reason,
+            }
+        )
         accounting_capital = capital_after_exit
 
     accounting = pd.DataFrame(accounting_rows)
     accounting.to_csv(output_dir / "phaseaware_accounting_diagnostics.csv", index=False)
     sum_trade_pnl = float(sum(float(t.pnl) for t in trade_objects))
-    sum_entry_costs = float(accounting["entry_cost_amount"].sum()) if not accounting.empty else 0.0
+    sum_entry_costs = (
+        float(accounting["entry_cost_amount"].sum()) if not accounting.empty else 0.0
+    )
     equity_curve = result.get("equity_curve")
-    final_equity = float(equity_curve.iloc[-1]) if equity_curve is not None and len(equity_curve) else float(backtester.initial_capital)
+    final_equity = (
+        float(equity_curve.iloc[-1])
+        if equity_curve is not None and len(equity_curve)
+        else float(backtester.initial_capital)
+    )
     reconstructed_final_equity = float(accounting_capital)
     accounting_error = reconstructed_final_equity - final_equity
     max_abs_trade_pnl_error = (
         float(accounting["pnl_reconciliation_error"].abs().max())
-        if not accounting.empty else 0.0
+        if not accounting.empty
+        else 0.0
     )
     accounting_summary = {
         "initial_capital": float(backtester.initial_capital),
@@ -172,8 +180,15 @@ def main() -> None:
         "reported_final_equity": final_equity,
         "final_equity_reconciliation_error": accounting_error,
         "max_abs_trade_pnl_reconstruction_error": max_abs_trade_pnl_error,
-        "identity": "initial_capital + sum(recorded_trade_pnl) - sum(entry_costs) = final_equity",
-        "status": "pass" if abs(accounting_error) <= 1e-6 and max_abs_trade_pnl_error <= 1e-6 else "fail",
+        "identity": (
+            "initial_capital + sum(recorded_trade_pnl) - sum(entry_costs) "
+            "= final_equity"
+        ),
+        "status": (
+            "pass"
+            if abs(accounting_error) <= 1e-6 and max_abs_trade_pnl_error <= 1e-6
+            else "fail"
+        ),
     }
     if accounting_summary["status"] != "pass":
         raise SystemExit(
@@ -204,22 +219,33 @@ def main() -> None:
         "mpml_generation_git_sha": git_sha(),
         "source_run_id": "run_20261014T160427Z",
         "source_run_git_sha": "90d8ea733b4a7fad1ebca8df95f6554bb3ae6e3d",
-        "strategy_path": "src.strategies.PhaseAwareStrategy + src.strategies.Backtester",
+        "strategy_path": (
+            "src.strategies.PhaseAwareStrategy + src.strategies.Backtester"
+        ),
         "accounting_reconciliation": accounting_summary,
         "notes": [
-            "Signals and trades were generated on this fold slice only, matching MPML's df_test strategy invocation.",
-            "This is the standalone PhaseAware baseline path, not StrategySelector_Dynamic's PhaseAware-labelled routing mode.",
-            "Fold-end liquidation is retained because Backtester.run closes any open position at the end of the supplied data.",
-            "TradeResult.pnl excludes the entry cost deducted separately from capital; use the accounting diagnostics to reconcile final equity.",
+            "Signals and trades were generated on this fold slice only, "
+            "matching MPML's df_test strategy invocation.",
+            "This is the standalone PhaseAware baseline path, not "
+            "StrategySelector_Dynamic's PhaseAware-labelled routing mode.",
+            "Fold-end liquidation is retained because Backtester.run closes any "
+            "open position at the end of the supplied data.",
+            "TradeResult.pnl excludes the entry cost deducted separately from "
+            "capital; use the accounting diagnostics to reconcile final equity.",
         ],
     }
-    (output_dir / "replay_metrics.json").write_text(json.dumps(metrics, indent=2, default=str) + "\n")
+    (output_dir / "replay_metrics.json").write_text(
+        json.dumps(metrics, indent=2, default=str) + "\n"
+    )
 
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     manifest["status"] = "expected_outputs_generated_with_accounting_reconciliation"
     manifest["expected_outputs"] = {
         "status": "generated_with_accounting_reconciliation",
-        "generation_command": "python phaseaware_replay_fixture_eurusd/export_phaseaware_replay_fixture.py",
+        "generation_command": (
+            "python phaseaware_replay_fixture_eurusd/"
+            "export_phaseaware_replay_fixture.py"
+        ),
         "generation_git_sha": git_sha(),
         "input_sha256": sha256(input_path),
         "output_files": {
@@ -238,7 +264,8 @@ def main() -> None:
     print(f"Generated PhaseAware replay outputs in {output_dir}")
     print(f"rows={len(df)} trades={len(trades)} input_sha256={sha256(input_path)}")
     print(
-        "accounting=" + accounting_summary["status"]
+        "accounting="
+        + accounting_summary["status"]
         + f" final_equity={final_equity:.6f}"
         + f" entry_costs={sum_entry_costs:.6f}"
         + f" reconciliation_error={accounting_error:.3e}"
