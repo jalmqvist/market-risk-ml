@@ -4,8 +4,10 @@ MRML is the execution and risk layer in the BSVE → MSML → MPML → MRML
 research pipeline. The v0 scaffold provides a practice-only OANDA
 market-data client, H1-to-D1 aggregation, a strategy-runner scaffold,
 pure risk gates, daily orchestration, and an operational journal. Its
-PhaseAware decision boundary is not yet bound to a canonical MPML
-runtime. The runtime is a forward-test harness; it has no live-capital
+OHLCV-only PhaseAware decision boundary is bound to the MPML causal
+runtime (`mpml.runtime.phaseaware.latest_decision`) at
+`ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`; `DailyRunner` is not wired
+to it by default. The runtime is a forward-test harness; it has no live-capital
 support and no live state resolver.
 
 ## Setup

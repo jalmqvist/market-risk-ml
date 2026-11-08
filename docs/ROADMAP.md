@@ -91,6 +91,12 @@ signal. Not yet wired into `DailyRunner`. Evidence, kept separate:
     22 passed. Synthetic causal-prefix parity against MPML's canonical
     detector and strategy matched at 69 cutoffs (126 to 600 bars),
     covering all four phases.
+-   Historical causal-prefix fixture: **not investigated.** No search for
+    suitable historical D1 OHLCV data with sufficient prehistory was
+    carried out, and no separate historical causal-prefix fixture was
+    created. Causal-prefix evidence is therefore synthetic only, plus the
+    frozen-fixture comparison above, which is not a valid oracle. This
+    remains open work.
 -   Historical replay (separate evidence): `test_replay_parity.py` passed
     (3 tests) against a separate git-verified checkout at the fixture
     generation revision `90d8ea733b4a7fad1ebca8df95f6554bb3ae6e3d`. Its

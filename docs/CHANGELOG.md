@@ -58,8 +58,9 @@
     position and currency limits across configured pairs.
 -   Added offline runtime/risk/journal tests. Historical MPML
     replay-fixture integrity is now covered; direct StrategyRunner
-    binding to MPML remains a separate integration step, as do broker
-    reconciliation/order adapter work.
+    binding to MPML was a separate step, since completed (superseded by
+    the runtime-binding entry above). Genuinely outstanding: broker
+    reconciliation/order adapter work and `DailyRunner` wiring.
 
 ## 0.1.0 - 2026-10-12
 

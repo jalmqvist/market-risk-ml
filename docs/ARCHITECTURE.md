@@ -129,6 +129,22 @@ run as `STRATEGY_DECISION_INVALID`; MRML does not invent a stop. History
 must start at a stable date because the signals are forward-filled state.
 `DailyRunner` is not wired to this strategy by default.
 
+**Validation evidence (separate categories):**
+
+-   Real git-verified runtime integration (MPML HEAD
+    `ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`, clean tracked tree):
+    `test_mpml_runtime_integration.py` 5 passed, 1 xfailed (the strict
+    frozen-fixture prefix test); `test_mpml_binding.py` 22 passed.
+-   Synthetic causal-prefix parity: 69 cutoffs, all four phases, against
+    MPML's canonical detector and strategy. This is synthetic evidence
+    only; it does not establish causal-prefix parity on historical data.
+-   Frozen EURUSD fixture prefixes (126 to 157 bars): 10 of 32 matched,
+    22 phase-only mismatches, because the fixture's phases come from a
+    longer upstream history. The fixture is not a valid OHLCV-only oracle.
+-   Historical replay, a distinct category: 3 passed against a separate
+    checkout at MPML `90d8ea733b4a7fad1ebca8df95f6554bb3ae6e3d`. It
+    establishes fixture reproducibility, not current-decision parity.
+
 ## 5. Data model (Postgres operational store)
 
 Tables: artifact_bundles, runs, bars_h1, bars_d1 (derived),
