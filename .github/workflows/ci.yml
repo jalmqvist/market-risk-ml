@@ -22,3 +22,34 @@ jobs:
       - run: mypy src
       - run: pytest
       - run: pytest -m parity
+
+  mpml-runtime:
+    runs-on: ubuntu-latest
+    env:
+      MPML_ROOT: /tmp/market-phase-ml
+      MPML_RUNTIME_REVISION: ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Clone MPML at the pinned runtime revision
+        run: |
+          git clone https://github.com/jalmqvist/market-phase-ml.git "$MPML_ROOT"
+          git -C "$MPML_ROOT" checkout --detach "$MPML_RUNTIME_REVISION"
+      - name: Verify MPML HEAD and clean tracked tree
+        run: |
+          head="$(git -C "$MPML_ROOT" rev-parse HEAD)"
+          echo "MPML HEAD: $head"
+          test "$head" = "$MPML_RUNTIME_REVISION"
+          test -z "$(git -C "$MPML_ROOT" status --porcelain --untracked-files=no)"
+      - run: python -m pip install -r requirements-dev.txt ta
+      - name: Real MPML runtime integration (skips are failures)
+        run: |
+          pytest tests/test_mpml_runtime_integration.py -m parity -rs -v \
+            | tee /tmp/integration.log
+          if grep -q SKIPPED /tmp/integration.log; then
+            echo "real MPML tests were skipped"; exit 1
+          fi
+      - run: pytest tests/test_mpml_binding.py -v
