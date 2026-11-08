@@ -12,7 +12,7 @@ from typing import Protocol
 
 from mrml.data.bars import D1Bar
 
-PINNED_MPML_REVISION = "90d8ea733b4a7fad1ebca8df95f6554bb3ae6e3d"
+PINNED_MPML_REVISION = "ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57"
 PHASEAWARE_V0_COMPOSITION = "PhaseAware_TF4_MR42"
 _PAIR_PATTERN = re.compile(r"[A-Z]{3}_[A-Z]{3}")
 

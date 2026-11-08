@@ -105,14 +105,29 @@ insufficient history must fail closed.
 **Implementation status (2026-10-30):** MRML contains a tested boundary
 for validating explicitly attested completed OHLCV bars, cutoff, and
 typed runtime output. MRML supplies no phase or other prepared field;
-those belong to the MPML-owned runtime. It is not bound to
-MPML and is not wired into `DailyRunner`. The boundary preserves the
-canonical numeric signal without mapping it to an MRML trade direction;
-a result is available no earlier than its decision cutoff, while order
-execution timing remains a separate contract. The exact upstream
-feature-preparation path, warm-up requirements, and a supported causal
-MPML entry point remain unverified because the pinned MPML checkout was
-unavailable.
+those belong to the MPML-owned runtime.
+
+**MPML binding (2026-11-08):** `MpmlPhaseAwareRuntime` calls
+`mpml.runtime.phaseaware.latest_decision` at MPML
+`ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`, verifying the checkout's git
+HEAD and clean tree (not MPML's `MPML_REVISION` override). Call path:
+`StrategyRunner` -> `MpmlPhaseAwareStrategy.generate_signal` ->
+`PhaseAwareDecisionAdapter` -> `MpmlPhaseAwareRuntime` -> MPML runtime
+(causal preparation, `MarketPhaseDetector`, `PhaseAwareStrategy("TF4",
+"MR42")`). The decision is for the latest completed bar and is available
+at that bar's close (`timestamp + 1 day` for a D1 open timestamp); it is
+not shifted. Warm-up is 126 bars, derived by MPML (not the 252-bar
+volatility window); fewer bars raise `InsufficientStrategyHistory`.
+
+Mapping to `SignalIntent`: sign is direction, `abs(signal)` is recorded as
+`size_multiplier` (the MPML phase multiplier; MRML does not apply it), and
+`sl_pct`/`tp_pct` (fractions of entry price) and timestamps are carried
+through. `stop_distance` is `sl_pct` times the latest completed close, a
+unit conversion rather than an entry price. TF4 supplies `sl_pct = 0`, so a
+non-flat TF4 decision raises `UnexecutableDecision`, which halts the daily
+run as `STRATEGY_DECISION_INVALID`; MRML does not invent a stop. History
+must start at a stable date because the signals are forward-filled state.
+`DailyRunner` is not wired to this strategy by default.
 
 ## 5. Data model (Postgres operational store)
 

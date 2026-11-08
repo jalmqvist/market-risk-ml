@@ -89,16 +89,24 @@ deterministic diffs for overlapping timestamps.
 
 `StrategyRunner` invokes an injected PhaseAware strategy protocol and
 validates its bundle evidence. Candidate ranks are retained for
-provenance but are not entry signals. This scaffold does not supply or
-bind a canonical MPML implementation. The separate
+provenance but are not entry signals. `DailyRunner` is not wired to an
+MPML-backed strategy by default. The separate
 `PhaseAwareDecisionAdapter` validates explicitly attested completed-bar
 OHLCV-only history, cutoff, and typed MPML result provenance. MRML supplies
-no phase, indicator, or other prepared field: preparation, phase
-detection, and the TF4/MR42 decision belong to the planned MPML-owned
-`latest_decision(history)` runtime. The adapter does not map a raw
-signal into an order direction.
-Canonical current-decision parity is not established. No selector or
-live state resolver is part of this runtime.
+no phase, indicator, or other prepared field.
+`MpmlPhaseAwareRuntime` binds that boundary to
+`mpml.runtime.phaseaware.latest_decision` at MPML
+`ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`; it reads the checkout's git
+HEAD (never `MPML_REVISION`) and requires a clean tree.
+`MpmlPhaseAwareStrategy` is the `StrategyRunner` seam: sign is direction,
+`abs(signal)` is recorded as `size_multiplier`, and `sl_pct`/`tp_pct` and
+the signal-bar timestamp are carried through unchanged. Nothing is applied
+to risk sizing. A non-flat TF4 decision has `sl_pct = 0` (no fixed stop);
+MRML raises `UnexecutableDecision` rather than inventing one.
+Real-MPML tests run only with `MPML_ROOT` set to a checkout at the pinned
+revision (`MPML_ROOT=... pytest -m parity -rs`); otherwise they skip, and a
+skip is not parity evidence. No selector or live state resolver is part of
+this runtime.
 
 `DailyRunner` requires reconciliation, complete current H1 data, a fresh
 historical D1 series (normally seeded from MPML CSV history), a current

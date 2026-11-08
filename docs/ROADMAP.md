@@ -75,15 +75,28 @@ remains the canonical historical regression check. This proves
 historical fixture reproducibility; it does **not** prove per-decision
 runtime parity.
 
-**MRML PR2 status at 2026-10-30:** the scaffold audit and an
-MPML-independent, fail-closed interface boundary are implemented. The
-exact pinned MPML checkout was not present, so its source was not
-inspected in this task and no canonical runtime is bound. The boundary
-is not wired into `DailyRunner`; it validates ordered bars with explicit
-completion attestations, an OHLCV-only input, cutoff, and reported
-decision provenance. MRML supplies no phase or other prepared field and
-does not calculate MPML features, indicators, or signals. Current-decision and
-prefix parity remain blocked pending MPML source/interface evidence.
+**MRML PR2 status at 2026-11-08:** the OHLCV-only boundary is bound to
+MPML's merged causal runtime (`mpml.runtime.phaseaware.latest_decision`,
+MPML `ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`). MRML supplies no phase
+or other prepared field and calculates no MPML feature, indicator or
+signal. Not yet wired into `DailyRunner`. Evidence, kept separate:
+
+-   Fake-module binding tests run in CI (mapping, error handling, revision
+    verification). They are not MPML parity.
+-   Real-MPML tests need `MPML_ROOT` at the pinned revision and skip
+    otherwise. In the authoring sandbox they were run against the pinned
+    files fetched from GitHub **without git metadata**, with the git
+    revision check bypassed locally, so the revision verification was not
+    exercised against a real checkout: synthetic current-decision and
+    prefix parity against MPML's canonical detector and strategy at 69
+    cutoffs (126 to 600 bars) passed, covering all four phases.
+-   Frozen EURUSD fixture prefixes (126 to 157 bars, 32 prefixes): 10
+    match and 22 differ, all in `phase` only (signal direction and SL/TP
+    agree). The fixture's `adx`/`atr`/`phase` were computed on a longer
+    upstream history, so they cannot be reproduced from its 157 OHLCV
+    bars. This is recorded as a strict `xfail`; the fixture is unchanged.
+-   Open decision: TF4 has no fixed stop, so its non-flat signals are
+    refused as unexecutable until a stop policy is agreed.
 
 The offline baseline was run in the repository virtual environment:
 `make test` passed (`68 passed, 1 skipped`); the skip is canonical

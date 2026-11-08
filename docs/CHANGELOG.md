@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+-   Bound the OHLCV-only PhaseAware boundary to MPML's merged causal
+    runtime (`ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`) with git-based
+    revision verification, a `StrategyRunner` strategy seam, and optional
+    `SignalIntent`/`StrategyDecision` provenance fields (size multiplier,
+    SL/TP fractions, timestamps; not applied to risk). Non-flat decisions
+    without a fixed stop are refused. Real-MPML tests skip without
+    `MPML_ROOT`; the frozen fixture is unchanged and its 22 of 32 prefix
+    mismatches (phase only) are documented as a strict `xfail`.
 -   Added a tested MRML PhaseAware decision boundary that validates
     ordered completed OHLCV history (no caller-supplied phase or prepared
     fields), cutoff, and pinned result provenance without implementing MPML strategy logic.
