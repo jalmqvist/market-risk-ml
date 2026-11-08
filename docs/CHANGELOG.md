@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+-   Synchronized README, roadmap and architecture with the verified
+    status: real git-verified runtime tests 5 passed / 1 xfailed, binding
+    tests 22 passed, synthetic prefix parity at 69 cutoffs, fixture
+    prefixes 10/32 matched, historical replay 3 passed at `90d8ea7`.
 -   Added an `mpml-runtime` CI job that clones MPML at
     `ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`, verifies its git HEAD and
     clean tracked tree, and runs the real-MPML integration and binding tests
@@ -18,8 +22,8 @@
 -   Added a tested MRML PhaseAware decision boundary that validates
     ordered completed OHLCV history (no caller-supplied phase or prepared
     fields), cutoff, and pinned result provenance without implementing MPML strategy logic.
-    The pinned MPML checkout was unavailable, so no current runtime is
-    bound and current-decision parity remains unverified. Recorded the
+    (Superseded by the runtime binding entry above: that checkout was
+    unavailable when the boundary was first added.) Recorded the
     offline scaffold baseline and existing lint/format failures in the
     PR2 roadmap status.
 -   Incorporated ADRs.md into the PR2 documentation update. Clarified

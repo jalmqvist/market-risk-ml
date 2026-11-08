@@ -84,12 +84,20 @@ signal. Not yet wired into `DailyRunner`. Evidence, kept separate:
 -   Fake-module binding tests run in CI (mapping, error handling, revision
     verification). They are not MPML parity.
 -   Real-MPML tests need `MPML_ROOT` at the pinned revision and skip
-    otherwise. In the authoring sandbox they were run against the pinned
-    files fetched from GitHub **without git metadata**, with the git
-    revision check bypassed locally, so the revision verification was not
-    exercised against a real checkout: synthetic current-decision and
-    prefix parity against MPML's canonical detector and strategy at 69
-    cutoffs (126 to 600 bars) passed, covering all four phases.
+    otherwise. They were run against a real git clone at
+    `ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57` (HEAD verified, tracked
+    tree clean, no bypass): `test_mpml_runtime_integration.py` 5 passed,
+    1 xfailed (the strict fixture-prefix test); `test_mpml_binding.py`
+    22 passed. Synthetic causal-prefix parity against MPML's canonical
+    detector and strategy matched at 69 cutoffs (126 to 600 bars),
+    covering all four phases.
+-   Historical replay (separate evidence): `test_replay_parity.py` passed
+    (3 tests) against a separate git-verified checkout at the fixture
+    generation revision `90d8ea733b4a7fad1ebca8df95f6554bb3ae6e3d`. Its
+    pin is unchanged and it is not run against the runtime revision.
+-   CI: a dedicated `mpml-runtime` job clones MPML at the runtime
+    revision, verifies HEAD and clean tracked tree, and runs the real
+    integration and binding tests; a skipped real-MPML test fails it.
 -   Frozen EURUSD fixture prefixes (126 to 157 bars, 32 prefixes): 10
     match and 22 differ, all in `phase` only (signal direction and SL/TP
     agree). The fixture's `adx`/`atr`/`phase` were computed on a longer
@@ -98,7 +106,8 @@ signal. Not yet wired into `DailyRunner`. Evidence, kept separate:
 -   Open decision: TF4 has no fixed stop, so its non-flat signals are
     refused as unexecutable until a stop policy is agreed.
 
-The offline baseline was run in the repository virtual environment:
+The following scaffold baseline is historical (taken before the MPML
+binding above):
 `make test` passed (`68 passed, 1 skipped`); the skip is canonical
 historical replay because `MPML_ROOT` was not set. `pytest -m parity -q`
 reported `1 skipped, 68 deselected`. `mypy src` passed. Baseline
@@ -125,12 +134,15 @@ not run. The new and directly affected Python files pass Ruff lint and
 format checks, and `mypy src` passes. Full-repository Ruff continues to
 report only the same 16 baseline `E501` violations.
 
-The remaining source-dependent evidence is the pinned MPML preparation
-and PhaseAware call path, its exact required fields and warm-up
-behavior, output/signal semantics, and a supported causal per-decision
-entry point independent of the historical `Backtester`. Until supplied,
-the runtime boundary must not be treated as an actionable strategy
-binding or as evidence of parity.
+The source-dependent evidence listed here at the time of the baseline
+(preparation path, required fields, 126-bar warm-up, signal semantics,
+and a causal per-decision entry point independent of the `Backtester`)
+is now supplied by the MPML runtime at `ef6b1b8`. Remaining limits: the
+frozen fixture is not a valid OHLCV-only oracle (22 of 32 prefix
+mismatches, phase only); TF4 can emit non-flat signals with
+`sl_pct = 0`, which MRML refuses as `UnexecutableDecision` because no
+stop-loss policy is approved; `DailyRunner` is not wired to the
+MPML-backed strategy by default; PR3 H1-to-D1 parity is separate.
 
 **Motivation:** MRML needs current signals from the same canonical
 strategy logic that MPML evaluates. Source inspection identified the

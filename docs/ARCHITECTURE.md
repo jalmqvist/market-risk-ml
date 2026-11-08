@@ -102,7 +102,7 @@ bounded-window or incremental-state optimization after parity tests
 demonstrate equivalence. Invalid, stale, unordered, duplicated, or
 insufficient history must fail closed.
 
-**Implementation status (2026-10-30):** MRML contains a tested boundary
+**Boundary status (2026-10-30, superseded by the binding below):** MRML contains a tested boundary
 for validating explicitly attested completed OHLCV bars, cutoff, and
 typed runtime output. MRML supplies no phase or other prepared field;
 those belong to the MPML-owned runtime.
