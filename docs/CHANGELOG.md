@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+-   Added an `mpml-runtime` CI job that clones MPML at
+    `ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`, verifies its git HEAD and
+    clean tracked tree, and runs the real-MPML integration and binding tests
+    (a skip fails the job). The historical replay test keeps its `90d8ea7`
+    pin and is not run in this job.
 -   Bound the OHLCV-only PhaseAware boundary to MPML's merged causal
     runtime (`ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`) with git-based
     revision verification, a `StrategyRunner` strategy seam, and optional
