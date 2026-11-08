@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+-   Synchronized README, roadmap and architecture with the verified
+    status: real git-verified runtime tests 5 passed / 1 xfailed, binding
+    tests 22 passed, synthetic prefix parity at 69 cutoffs, fixture
+    prefixes 10/32 matched, historical replay 3 passed at `90d8ea7`.
+-   Added an `mpml-runtime` CI job that clones MPML at
+    `ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`, verifies its git HEAD and
+    clean tracked tree, and runs the real-MPML integration and binding tests
+    (a skip fails the job). The historical replay test keeps its `90d8ea7`
+    pin and is not run in this job.
+-   Bound the OHLCV-only PhaseAware boundary to MPML's merged causal
+    runtime (`ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`) with git-based
+    revision verification, a `StrategyRunner` strategy seam, and optional
+    `SignalIntent`/`StrategyDecision` provenance fields (size multiplier,
+    SL/TP fractions, timestamps; not applied to risk). Non-flat decisions
+    without a fixed stop are refused. Real-MPML tests skip without
+    `MPML_ROOT`; the frozen fixture is unchanged and its 22 of 32 prefix
+    mismatches (phase only) are documented as a strict `xfail`.
+-   Added a tested MRML PhaseAware decision boundary that validates
+    ordered completed OHLCV history (no caller-supplied phase or prepared
+    fields), cutoff, and pinned result provenance without implementing MPML strategy logic.
+    (Superseded by the runtime binding entry above: that checkout was
+    unavailable when the boundary was first added.) Recorded the
+    offline scaffold baseline and existing lint/format failures in the
+    PR2 roadmap status.
 -   Incorporated ADRs.md into the PR2 documentation update. Clarified
     that ADR-006 continues to defer selector/state serving for v0 and
     added proposed ADR-007 for the causal PhaseAware runtime interface,
@@ -34,8 +58,9 @@
     position and currency limits across configured pairs.
 -   Added offline runtime/risk/journal tests. Historical MPML
     replay-fixture integrity is now covered; direct StrategyRunner
-    binding to MPML remains a separate integration step, as do broker
-    reconciliation/order adapter work.
+    binding to MPML was a separate step, since completed (superseded by
+    the runtime-binding entry above). Genuinely outstanding: broker
+    reconciliation/order adapter work and `DailyRunner` wiring.
 
 ## 0.1.0 - 2026-10-12
 

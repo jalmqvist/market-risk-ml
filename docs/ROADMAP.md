@@ -65,7 +65,7 @@ implemented; MRML must not silently duplicate strategy rules.
 
 ### Integration PR2 --- Establish and bind the MPML strategy-runtime interface
 
-**Status at 2026-10-29:** historical replay parity is established for
+**Historical evidence:** historical replay parity is established for
 the frozen EURUSD fixture at the pinned MPML revision. The opt-in parity
 test was run in a detached worktree at MPML commit
 `90d8ea733b4a7fad1ebca8df95f6554bb3ae6e3d` and passed
@@ -74,6 +74,81 @@ checkout was reported byte-identical, but the pinned-revision run
 remains the canonical historical regression check. This proves
 historical fixture reproducibility; it does **not** prove per-decision
 runtime parity.
+
+**MRML PR2 status at 2026-11-08:** the OHLCV-only boundary is bound to
+MPML's merged causal runtime (`mpml.runtime.phaseaware.latest_decision`,
+MPML `ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`). MRML supplies no phase
+or other prepared field and calculates no MPML feature, indicator or
+signal. Not yet wired into `DailyRunner`. Evidence, kept separate:
+
+-   Fake-module binding tests run in CI (mapping, error handling, revision
+    verification). They are not MPML parity.
+-   Real-MPML tests need `MPML_ROOT` at the pinned revision and skip
+    otherwise. They were run against a real git clone at
+    `ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57` (HEAD verified, tracked
+    tree clean, no bypass): `test_mpml_runtime_integration.py` 5 passed,
+    1 xfailed (the strict fixture-prefix test); `test_mpml_binding.py`
+    22 passed. Synthetic causal-prefix parity against MPML's canonical
+    detector and strategy matched at 69 cutoffs (126 to 600 bars),
+    covering all four phases.
+-   Historical causal-prefix fixture: **not investigated.** No search for
+    suitable historical D1 OHLCV data with sufficient prehistory was
+    carried out, and no separate historical causal-prefix fixture was
+    created. Causal-prefix evidence is therefore synthetic only, plus the
+    frozen-fixture comparison above, which is not a valid oracle. This
+    remains open work.
+-   Historical replay (separate evidence): `test_replay_parity.py` passed
+    (3 tests) against a separate git-verified checkout at the fixture
+    generation revision `90d8ea733b4a7fad1ebca8df95f6554bb3ae6e3d`. Its
+    pin is unchanged and it is not run against the runtime revision.
+-   CI: a dedicated `mpml-runtime` job clones MPML at the runtime
+    revision, verifies HEAD and clean tracked tree, and runs the real
+    integration and binding tests; a skipped real-MPML test fails it.
+-   Frozen EURUSD fixture prefixes (126 to 157 bars, 32 prefixes): 10
+    match and 22 differ, all in `phase` only (signal direction and SL/TP
+    agree). The fixture's `adx`/`atr`/`phase` were computed on a longer
+    upstream history, so they cannot be reproduced from its 157 OHLCV
+    bars. This is recorded as a strict `xfail`; the fixture is unchanged.
+-   Open decision: TF4 has no fixed stop, so its non-flat signals are
+    refused as unexecutable until a stop policy is agreed.
+
+The following scaffold baseline is historical (taken before the MPML
+binding above):
+`make test` passed (`68 passed, 1 skipped`); the skip is canonical
+historical replay because `MPML_ROOT` was not set. `pytest -m parity -q`
+reported `1 skipped, 68 deselected`. `mypy src` passed. Baseline
+`ruff check .` reported 16 existing `E501` violations in the replay
+exporter and replay parity test; `ruff format --check .` reported those
+same two existing files unformatted. No application startup command is
+declared; configuration requires `MRML_DATABASE_URL`, and actual
+broker/database services were not exercised. Tests use offline stubs
+and local SQLite only.
+
+The exercised scaffold components are the contracts/configuration,
+price-bar transformations, pure risk gates, injected daily/strategy
+orchestration, and journal schema tests on temporary SQLite. OANDA
+requests are mocked; no credentialed service is called. The application
+has no declared CLI/startup entry point, and the daily runner requires
+injected market-data, reconciliation, risk-context, journal, bundle,
+and strategy implementations.
+
+After adding the boundary, `make test` passed (`92 passed, 1 skipped`);
+`tests/test_strategy_runtime.py` passed all 24 interface tests and the
+fixture test module reported `2 passed, 1 skipped`. `pytest -m parity -q`
+reported `1 skipped, 92 deselected`, so canonical historical replay was
+not run. The new and directly affected Python files pass Ruff lint and
+format checks, and `mypy src` passes. Full-repository Ruff continues to
+report only the same 16 baseline `E501` violations.
+
+The source-dependent evidence listed here at the time of the baseline
+(preparation path, required fields, 126-bar warm-up, signal semantics,
+and a causal per-decision entry point independent of the `Backtester`)
+is now supplied by the MPML runtime at `ef6b1b8`. Remaining limits: the
+frozen fixture is not a valid OHLCV-only oracle (22 of 32 prefix
+mismatches, phase only); TF4 can emit non-flat signals with
+`sl_pct = 0`, which MRML refuses as `UnexecutableDecision` because no
+stop-loss policy is approved; `DailyRunner` is not wired to the
+MPML-backed strategy by default; PR3 H1-to-D1 parity is separate.
 
 **Motivation:** MRML needs current signals from the same canonical
 strategy logic that MPML evaluates. Source inspection identified the

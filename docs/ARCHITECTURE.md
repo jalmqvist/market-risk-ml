@@ -102,6 +102,49 @@ bounded-window or incremental-state optimization after parity tests
 demonstrate equivalence. Invalid, stale, unordered, duplicated, or
 insufficient history must fail closed.
 
+**Boundary status (2026-10-30, superseded by the binding below):** MRML contains a tested boundary
+for validating explicitly attested completed OHLCV bars, cutoff, and
+typed runtime output. MRML supplies no phase or other prepared field;
+those belong to the MPML-owned runtime.
+
+**MPML binding (2026-11-08):** `MpmlPhaseAwareRuntime` calls
+`mpml.runtime.phaseaware.latest_decision` at MPML
+`ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`, verifying the checkout's git
+HEAD and clean tree (not MPML's `MPML_REVISION` override). Call path:
+`StrategyRunner` -> `MpmlPhaseAwareStrategy.generate_signal` ->
+`PhaseAwareDecisionAdapter` -> `MpmlPhaseAwareRuntime` -> MPML runtime
+(causal preparation, `MarketPhaseDetector`, `PhaseAwareStrategy("TF4",
+"MR42")`). The decision is for the latest completed bar and is available
+at that bar's close (`timestamp + 1 day` for a D1 open timestamp); it is
+not shifted. Warm-up is 126 bars, derived by MPML (not the 252-bar
+volatility window); fewer bars raise `InsufficientStrategyHistory`.
+
+Mapping to `SignalIntent`: sign is direction, `abs(signal)` is recorded as
+`size_multiplier` (the MPML phase multiplier; MRML does not apply it), and
+`sl_pct`/`tp_pct` (fractions of entry price) and timestamps are carried
+through. `stop_distance` is `sl_pct` times the latest completed close, a
+unit conversion rather than an entry price. TF4 supplies `sl_pct = 0`, so a
+non-flat TF4 decision raises `UnexecutableDecision`, which halts the daily
+run as `STRATEGY_DECISION_INVALID`; MRML does not invent a stop. History
+must start at a stable date because the signals are forward-filled state.
+`DailyRunner` is not wired to this strategy by default.
+
+**Validation evidence (separate categories):**
+
+-   Real git-verified runtime integration (MPML HEAD
+    `ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`, clean tracked tree):
+    `test_mpml_runtime_integration.py` 5 passed, 1 xfailed (the strict
+    frozen-fixture prefix test); `test_mpml_binding.py` 22 passed.
+-   Synthetic causal-prefix parity: 69 cutoffs, all four phases, against
+    MPML's canonical detector and strategy. This is synthetic evidence
+    only; it does not establish causal-prefix parity on historical data.
+-   Frozen EURUSD fixture prefixes (126 to 157 bars): 10 of 32 matched,
+    22 phase-only mismatches, because the fixture's phases come from a
+    longer upstream history. The fixture is not a valid OHLCV-only oracle.
+-   Historical replay, a distinct category: 3 passed against a separate
+    checkout at MPML `90d8ea733b4a7fad1ebca8df95f6554bb3ae6e3d`. It
+    establishes fixture reproducibility, not current-decision parity.
+
 ## 5. Data model (Postgres operational store)
 
 Tables: artifact_bundles, runs, bars_h1, bars_d1 (derived),

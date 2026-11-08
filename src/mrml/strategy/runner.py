@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from types import MappingProxyType
 from typing import Protocol
 
@@ -16,6 +17,13 @@ class SignalIntent:
     direction: str
     stop_distance: float
     rationale: str = ""
+    # Optional strategy provenance. These are recorded, never applied: MRML's
+    # risk model still sizes from ``stop_distance`` and its own limits.
+    size_multiplier: float | None = None
+    stop_loss_pct: float | None = None
+    take_profit_pct: float | None = None
+    signal_bar_timestamp: datetime | None = None
+    decision_cutoff: datetime | None = None
 
     def __post_init__(self) -> None:
         if self.direction not in {"long", "short", "flat"}:
@@ -25,7 +33,7 @@ class SignalIntent:
 
 
 class PhaseAwareStrategy(Protocol):
-    """Adapter contract implemented by the pinned MPML PhaseAware strategy."""
+    """Injected strategy seam; it is not a binding to MPML's runtime API."""
 
     def generate_signal(self, pair: str, bars: Sequence[D1Bar]) -> SignalIntent: ...
 
@@ -39,6 +47,11 @@ class StrategyDecision:
     evaluation_id: str
     candidate_rank: int
     rationale: str
+    size_multiplier: float | None = None
+    stop_loss_pct: float | None = None
+    take_profit_pct: float | None = None
+    signal_bar_timestamp: datetime | None = None
+    decision_cutoff: datetime | None = None
 
 
 class StrategyRunner:
@@ -100,6 +113,11 @@ class StrategyRunner:
             direction=raw_intent.direction,
             stop_distance=raw_intent.stop_distance,
             rationale=raw_intent.rationale,
+            size_multiplier=raw_intent.size_multiplier,
+            stop_loss_pct=raw_intent.stop_loss_pct,
+            take_profit_pct=raw_intent.take_profit_pct,
+            signal_bar_timestamp=raw_intent.signal_bar_timestamp,
+            decision_cutoff=raw_intent.decision_cutoff,
         )
         return StrategyDecision(
             pair=pair,
@@ -109,4 +127,9 @@ class StrategyRunner:
             evaluation_id=evaluation.evaluation_id,
             candidate_rank=candidate_rank,
             rationale=intent.rationale,
+            size_multiplier=intent.size_multiplier,
+            stop_loss_pct=intent.stop_loss_pct,
+            take_profit_pct=intent.take_profit_pct,
+            signal_bar_timestamp=intent.signal_bar_timestamp,
+            decision_cutoff=intent.decision_cutoff,
         )

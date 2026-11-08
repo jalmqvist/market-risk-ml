@@ -19,18 +19,26 @@ from pathlib import Path
 import pytest
 
 FIXTURE_DIR = (
-    Path(__file__).resolve().parents[1]
-    / "PARITY"
-    / "phaseaware_replay_fixture_eurusd"
+    Path(__file__).resolve().parents[1] / "PARITY" / "phaseaware_replay_fixture_eurusd"
 )
 EXPECTED_DIR = FIXTURE_DIR / "expected"
 PINNED_MPML_SHA = "90d8ea733b4a7fad1ebca8df95f6554bb3ae6e3d"
 EXPECTED_OUTPUTS = {
-    "phaseaware_signals.csv": "8e332ce64a045d5366a1289db04ee64db08900103784109bbd7dcbe0cc5cdb1a",
-    "phaseaware_execution_timeline.csv": "17739cc67a3d6f91591427b323ecb1a0602fb1cb5dcba97620c2f02021169f13",
-    "phaseaware_trades.csv": "6fd889791f3d171b8ba3bf52029840b1dc79e633e173c6bfd018c07ff53d9342",
-    "phaseaware_accounting_diagnostics.csv": "0195a6a09b3ec0511a6f81f0f4daec8623eff7cbad4a50403035bdfdda89fdba",
-    "replay_metrics.json": "0d258818f86e0862407ea906d0918e49907193e3a6bf725369a1d524c6ca1829",
+    "phaseaware_signals.csv": (
+        "8e332ce64a045d5366a1289db04ee64db08900103784109bbd7dcbe0cc5cdb1a"
+    ),
+    "phaseaware_execution_timeline.csv": (
+        "17739cc67a3d6f91591427b323ecb1a0602fb1cb5dcba97620c2f02021169f13"
+    ),
+    "phaseaware_trades.csv": (
+        "6fd889791f3d171b8ba3bf52029840b1dc79e633e173c6bfd018c07ff53d9342"
+    ),
+    "phaseaware_accounting_diagnostics.csv": (
+        "0195a6a09b3ec0511a6f81f0f4daec8623eff7cbad4a50403035bdfdda89fdba"
+    ),
+    "replay_metrics.json": (
+        "0d258818f86e0862407ea906d0918e49907193e3a6bf725369a1d524c6ca1829"
+    ),
 }
 
 
@@ -128,9 +136,7 @@ def test_canonical_mpml_replay_matches_frozen_outputs(tmp_path: Path) -> None:
         if not mpml_python.is_absolute():
             mpml_python = Path.cwd() / mpml_python
 
-        assert mpml_python.is_file(), (
-            f"MPML_PYTHON is not a file: {mpml_python}"
-        )
+        assert mpml_python.is_file(), f"MPML_PYTHON is not a file: {mpml_python}"
         # Do not call resolve(): the venv's python may be a symlink to system Python.
         python_executable = str(mpml_python)
     else:
