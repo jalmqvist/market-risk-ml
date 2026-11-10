@@ -65,8 +65,8 @@ implemented; MRML must not silently duplicate strategy rules.
 
 ### Integration PR2 --- Establish and bind the MPML strategy-runtime interface
 
-**Historical evidence:** historical replay parity is established for
-the frozen EURUSD fixture at the pinned MPML revision. The opt-in parity
+**Historical evidence:** historical replay parity is established for the
+frozen EURUSD fixture at the pinned MPML revision. The opt-in parity
 test was run in a detached worktree at MPML commit
 `90d8ea733b4a7fad1ebca8df95f6554bb3ae6e3d` and passed
 (`1 passed, 68 deselected`). A separate baseline run on the newer
@@ -81,8 +81,8 @@ MPML `ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`). MRML supplies no phase
 or other prepared field and calculates no MPML feature, indicator or
 signal. Not yet wired into `DailyRunner`. Evidence, kept separate:
 
--   Fake-module binding tests run in CI (mapping, error handling, revision
-    verification). They are not MPML parity.
+-   Fake-module binding tests run in CI (mapping, error handling,
+    revision verification). They are not MPML parity.
 -   Real-MPML tests need `MPML_ROOT` at the pinned revision and skip
     otherwise. They were run against a real git clone at
     `ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57` (HEAD verified, tracked
@@ -91,16 +91,17 @@ signal. Not yet wired into `DailyRunner`. Evidence, kept separate:
     22 passed. Synthetic causal-prefix parity against MPML's canonical
     detector and strategy matched at 69 cutoffs (126 to 600 bars),
     covering all four phases.
--   Historical causal-prefix fixture: **not investigated.** No search for
-    suitable historical D1 OHLCV data with sufficient prehistory was
+-   Historical causal-prefix fixture: **not investigated.** No search
+    for suitable historical D1 OHLCV data with sufficient prehistory was
     carried out, and no separate historical causal-prefix fixture was
-    created. Causal-prefix evidence is therefore synthetic only, plus the
-    frozen-fixture comparison above, which is not a valid oracle. This
-    remains open work.
--   Historical replay (separate evidence): `test_replay_parity.py` passed
-    (3 tests) against a separate git-verified checkout at the fixture
-    generation revision `90d8ea733b4a7fad1ebca8df95f6554bb3ae6e3d`. Its
-    pin is unchanged and it is not run against the runtime revision.
+    created. Causal-prefix evidence is therefore synthetic only, plus
+    the frozen-fixture comparison above, which is not a valid oracle.
+    This remains open work.
+-   Historical replay (separate evidence): `test_replay_parity.py`
+    passed (3 tests) against a separate git-verified checkout at the
+    fixture generation revision
+    `90d8ea733b4a7fad1ebca8df95f6554bb3ae6e3d`. Its pin is unchanged and
+    it is not run against the runtime revision.
 -   CI: a dedicated `mpml-runtime` job clones MPML at the runtime
     revision, verifies HEAD and clean tracked tree, and runs the real
     integration and binding tests; a skipped real-MPML test fails it.
@@ -108,37 +109,38 @@ signal. Not yet wired into `DailyRunner`. Evidence, kept separate:
     match and 22 differ, all in `phase` only (signal direction and SL/TP
     agree). The fixture's `adx`/`atr`/`phase` were computed on a longer
     upstream history, so they cannot be reproduced from its 157 OHLCV
-    bars. This is recorded as a strict `xfail`; the fixture is unchanged.
+    bars. This is recorded as a strict `xfail`; the fixture is
+    unchanged.
 -   Open decision: TF4 has no fixed stop, so its non-flat signals are
     refused as unexecutable until a stop policy is agreed.
 
 The following scaffold baseline is historical (taken before the MPML
-binding above):
-`make test` passed (`68 passed, 1 skipped`); the skip is canonical
-historical replay because `MPML_ROOT` was not set. `pytest -m parity -q`
-reported `1 skipped, 68 deselected`. `mypy src` passed. Baseline
-`ruff check .` reported 16 existing `E501` violations in the replay
-exporter and replay parity test; `ruff format --check .` reported those
-same two existing files unformatted. No application startup command is
-declared; configuration requires `MRML_DATABASE_URL`, and actual
-broker/database services were not exercised. Tests use offline stubs
-and local SQLite only.
+binding above): `make test` passed (`68 passed, 1 skipped`); the skip is
+canonical historical replay because `MPML_ROOT` was not set.
+`pytest -m parity -q` reported `1 skipped, 68 deselected`. `mypy src`
+passed. Baseline `ruff check .` reported 16 existing `E501` violations
+in the replay exporter and replay parity test; `ruff format --check .`
+reported those same two existing files unformatted. No application
+startup command is declared; configuration requires `MRML_DATABASE_URL`,
+and actual broker/database services were not exercised. Tests use
+offline stubs and local SQLite only.
 
 The exercised scaffold components are the contracts/configuration,
 price-bar transformations, pure risk gates, injected daily/strategy
 orchestration, and journal schema tests on temporary SQLite. OANDA
 requests are mocked; no credentialed service is called. The application
 has no declared CLI/startup entry point, and the daily runner requires
-injected market-data, reconciliation, risk-context, journal, bundle,
-and strategy implementations.
+injected market-data, reconciliation, risk-context, journal, bundle, and
+strategy implementations.
 
 After adding the boundary, `make test` passed (`92 passed, 1 skipped`);
 `tests/test_strategy_runtime.py` passed all 24 interface tests and the
-fixture test module reported `2 passed, 1 skipped`. `pytest -m parity -q`
-reported `1 skipped, 92 deselected`, so canonical historical replay was
-not run. The new and directly affected Python files pass Ruff lint and
-format checks, and `mypy src` passes. Full-repository Ruff continues to
-report only the same 16 baseline `E501` violations.
+fixture test module reported `2 passed, 1 skipped`.
+`pytest -m parity -q` reported `1 skipped, 92 deselected`, so canonical
+historical replay was not run. The new and directly affected Python
+files pass Ruff lint and format checks, and `mypy src` passes.
+Full-repository Ruff continues to report only the same 16 baseline
+`E501` violations.
 
 The source-dependent evidence listed here at the time of the baseline
 (preparation path, required fields, 126-bar warm-up, signal semantics,
@@ -278,6 +280,237 @@ silently duplicate strategy rules in MRML. If the MPML side needs a new
 supported interface, have it propose that as a separately reviewable
 MPML change rather than hiding it inside the MRML adapter.
 
+## Delivery plan: from merged runtime binding to OANDA demo
+
+This section is the near-term execution plan for turning the merged PR2
+runtime binding into a complete, reproducible MRML dry-run and then an
+OANDA practice/demo forward test. It supplements the original foundation
+phases below; it does not renumber or silently redefine them.
+
+### Current baseline (2026-11-10)
+
+-   **PR2 / MPML runtime binding: merged.** MRML calls the pinned MPML
+    causal runtime at `ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`. Hosted
+    CI is green. The local verification checkout is merge commit
+    `1a37af45da8df15e6f51cc48db49c70cc23acf33`; local checks reported
+    112 passed, 7 skipped, Ruff lint and format clean, and mypy clean.
+-   The seven local skips were environment-dependent real-MPML/replay
+    tests; the hosted CI job supplies the pinned MPML checkout for its
+    runtime integration tests. Do not interpret local skips as failed
+    tests or as local real-MPML validation.
+-   The strategy binding is not wired into `DailyRunner` by default.
+-   The frozen EURUSD historical replay fixture remains a separate
+    historical regression oracle, not a causal-prefix oracle.
+-   A historical OHLCV causal-prefix fixture has not yet been
+    investigated.
+-   TF4 can emit non-flat decisions with `sl_pct = 0`; MRML correctly
+    refuses these as `UnexecutableDecision`. No stop policy is approved.
+-   The full end-to-end dry-run entry point and OANDA demo operating
+    loop are not yet complete.
+
+### Milestone A --- H1-to-D1 market-price-bar parity (next)
+
+**Purpose:** prove that MRML's H1-to-D1 price-bar construction produces
+the same D1 OHLCV inputs as MPML's canonical D1 market-data preparation
+when given identical hourly data.
+
+**Scope and sequence:**
+
+1.  Inspect the current MRML H1-to-D1 builder, OANDA candle handling,
+    timestamp conventions, and relevant tests before changing code.
+2.  Inspect MPML's canonical D1 price-data preparation and establish its
+    actual timezone, day boundary, timestamp-label, OHLCV aggregation,
+    volume, and missing-data semantics. Do not infer these from comments
+    or MRML's current defaults.
+3.  Select overlapping historical H1 data that can be fed identically to
+    both implementations. Record provenance, date range, timezone, and
+    source format.
+4.  Compare resulting D1 timestamps and every OHLCV field. Report exact
+    match counts and discrepancies, not just a visual/sample comparison.
+5.  Add focused tests for day boundaries, daylight-saving transitions
+    where relevant, weekends, missing hours, duplicate/out-of-order
+    candles, incomplete current days, and late-arriving data.
+6.  Define deterministic fail-closed behavior for ambiguous or
+    incomplete inputs. Keep tolerated exceptions explicit and tested.
+7.  Preserve the responsibility boundary: MRML aggregates **price
+    bars**; MPML remains responsible for behavioral-feature aggregation.
+
+**Acceptance evidence:**
+
+-   The MPML source revision and exact preparation path are recorded.
+-   The comparison dataset and its provenance are reproducible.
+-   Identical eligible H1 inputs produce identical D1 timestamps and
+    OHLCV values, or every tolerated difference has a documented
+    explanation and a regression test.
+-   Missing, incomplete, ambiguous, duplicated, or late data follows an
+    explicit tested policy.
+-   Existing strategy-runtime, risk, journal, and historical replay
+    tests remain green.
+
+**Deliverable:** a merged, tested H1-to-D1 implementation with a
+reproducible parity report and fixtures. This milestone validates the
+market-data boundary; it does not by itself create a complete daily
+application.
+
+### Milestone B --- Prepare the end-to-end historical input
+
+After Milestone A, establish the deterministic input package used by the
+first complete MRML run.
+
+-   Select and document a historical D1 OHLCV series with sufficient
+    prehistory for the pinned MPML runtime's 126-bar minimum and its
+    forward-filled signal state. Prefer a stable start date and preserve
+    the full available prefix rather than arbitrarily truncating it.
+-   Where H1 source data is available, retain the source H1 data and the
+    derived D1 bars so the aggregation can be reproduced.
+-   Record pair, source, timezone, timestamp convention, date range,
+    missing-data policy, and content hashes.
+-   Separately investigate whether suitable historical D1 OHLCV with
+    enough prehistory can support a genuine historical causal-prefix
+    fixture. If it cannot be obtained, record that limitation; synthetic
+    prefix tests must remain labelled synthetic.
+-   Keep the frozen EURUSD replay fixture unchanged and separate from
+    this new runtime-input fixture.
+
+**Deliverable:** a versioned, reproducible historical input fixture
+suitable for repeated end-to-end dry-runs and future causal-prefix
+validation.
+
+### Milestone C --- Resolve execution eligibility and wire the daily path
+
+The current PhaseAware runtime binding is tested, but it is not yet
+wired into `DailyRunner` by default. Before an end-to-end run can
+produce executable entries:
+
+1.  Agree an explicit TF4 stop-loss policy for non-flat signals with
+    `sl_pct = 0`, or explicitly constrain the first runnable scenario to
+    decisions that are safely executable under an already approved
+    policy. Do not silently invent an ATR stop or change canonical MPML
+    strategy semantics.
+2.  Inspect the current `DailyRunner` dependency interfaces and wire the
+    MPML-backed strategy through the existing strategy seam with the
+    smallest appropriate change.
+3.  Ensure the runner supplies a validated historical D1 prefix and the
+    newly completed D1 bar, with the correct cutoff and causal timing.
+4.  Ensure risk decisions, rejected decisions, and reasons are
+    journaled.
+5.  Keep the broker executor disabled for the initial dry-run.
+
+**Deliverable:** an integration-tested daily orchestration path using
+the actual MPML-backed strategy, with safe handling of unexecutable
+signals and no broker order submission.
+
+### Milestone D --- First complete, reproducible dry-run
+
+This is the first product milestone at which MRML should be considered
+end-to-end runnable.
+
+Provide a documented command or entry point that, using a known
+historical or explicitly supplied market-data input:
+
+-   loads and validates configuration and the required research bundle;
+-   loads the reproducible historical D1 prefix;
+-   obtains or constructs the latest eligible completed D1 bar;
+-   invokes the pinned MPML PhaseAware runtime through MRML;
+-   applies MRML risk checks;
+-   records actionable, rejected, and skipped decisions with reasons;
+-   persists run metadata and journal records;
+-   emits a concise run summary with input provenance, strategy/MPML
+    revision, decision timestamp, risk outcome, and execution status.
+
+**Acceptance evidence:**
+
+-   A clean documented setup can install dependencies and run the
+    command.
+-   A fixed fixture produces deterministic decisions and journal outputs
+    across repeated runs.
+-   A test covers the full path through the actual runner, not only
+    isolated injected components.
+-   No broker order is submitted in dry-run mode.
+-   Failure cases (missing/stale data, invalid history, unavailable MPML
+    checkout, unexecutable TF4 stop, and risk rejection) fail closed and
+    leave an auditable result.
+
+**Deliverable:** a repeatable historical end-to-end dry-run that can be
+run, inspected, and debugged without broker credentials or live
+services.
+
+### Milestone E --- OANDA practice/demo execution
+
+Only after the dry-run is stable:
+
+-   Complete broker position/order reconciliation against the journal.
+-   Implement and test a working OANDA practice order adapter.
+-   Preserve deterministic client order IDs and idempotent submission.
+-   Handle partial fills, rejected orders, timeouts, retries, and
+    restart/reconciliation scenarios.
+-   Record fills, spread, slippage, and broker-vs-journal discrepancies.
+-   Keep practice/demo endpoint and credentials enforced; live capital
+    remains outside v0.
+
+**Deliverable:** a controlled practice-account execution path with
+reconciliation and failure-recovery tests.
+
+### Milestone F --- Scheduled forward-test operation
+
+-   Wire the complete approved strategy path into `DailyRunner`.
+-   Add process locking, scheduling, alerting, and run summaries.
+-   Validate restart behavior, stale/missing data handling, and
+    broker/journal reconciliation.
+-   Run repeated dry-runs before enabling practice/demo order
+    submission.
+-   Maintain a daily operational record of decisions, skipped trades,
+    fills, costs, slippage, and system failures.
+
+**Deliverable:** a stable OANDA practice/demo forward-test harness. This
+is not authorization for live-capital trading.
+
+### Planning estimates (indicative, not commitments)
+
+Assuming focused work and no major architectural surprises:
+
+  ------------------------------------------------------------------------
+  Target                           Indicative effort Meaning
+  --------------------- ---------------------------- ---------------------
+  Milestone A: D1           2--4 focused engineering Validated market-data
+  parity                                        days boundary
+
+  Milestones B--D:           4--8 additional focused Reproducible
+  first complete                    engineering days end-to-end historical
+  dry-run                                            run
+
+  Milestones E--F:             1--3 additional weeks Broker-connected,
+  practice/demo forward                              scheduled operating
+  test                                               loop
+  ------------------------------------------------------------------------
+
+These are planning estimates, not calendar promises. Data availability,
+the TF4 stop-policy decision, broker edge cases, and CI/environment
+issues may change the schedule. The first priority is the complete
+historical dry-run, not rushing into broker execution.
+
+### Critical-path priorities and explicit non-goals
+
+The immediate sequence is **A → B → C → D → E → F**. Historical
+causal-prefix fixture investigation can proceed alongside A/B, but
+should not block H1-to-D1 parity if suitable historical data is not
+immediately available.
+
+Do not pull the following into this critical path:
+
+-   live state resolution or selector model-serving;
+-   behavioral-feature aggregation in MRML;
+-   alternative strategy compositions;
+-   runtime optimization with bounded windows or incremental state
+    before equivalence is demonstrated;
+-   live-capital execution.
+
+The frozen historical replay, synthetic causal-prefix tests, historical
+runtime-prefix validation, and H1-to-D1 market-bar parity are distinct
+evidence categories. Keep their claims and fixtures separate.
+
+------------------------------------------------------------------------
+
 ### Integration PR3 --- Validate MRML H1-to-D1 market-price-bar parity
 
 **Motivation:** MRML receives broker data at H1 resolution but operates
@@ -313,6 +546,13 @@ construct behavioral features.
 
 The existing numbered foundation phases below retain their original
 meaning. This integration sequence does not renumber or redefine them.
+
+## Original foundation schedule (historical; retained for context)
+
+The dated Week 0 / Phase 1--4 schedule below is the original 2026
+foundation plan. It is retained as historical planning context; the
+current near-term delivery sequence and status are defined in the
+Delivery plan section above.
 
 ## Week 0 (Thu Oct 8 - Fri Oct 9): unblock, don't build
 
