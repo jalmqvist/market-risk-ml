@@ -1,19 +1,72 @@
-# MRML Roadmap (v0.3 canonical, 2026-10-23)
+# MRML Roadmap (v0.4, 2026-11-12)
 
-## Scope baseline (v0)
+## Scope baseline and guiding principle (v0)
 
--   Execution/risk/journaling harness for forward testing on OANDA demo.
--   PhaseAware-first operation from MPML bundles.
--   No live state resolution in v0; no selector model-serving in v0.
+MRML is an independent, minimalistic trading, risk, and operational
+platform. Its first objective is to establish a reliable end-to-end
+connection to an OANDA practice account: retrieve market and account
+data, open and manage positions, close positions, and reconcile broker
+state with its own journal.
 
-## Current implementation status and MPML integration sequence (2026-10-23)
+MRML must remain useful without MSML or MPML. Those repositories are
+upstream research and recommendation providers, not authorities over
+MRML's market-data, risk, execution, or broker contracts. Integration
+with MPML is planned after the basic trading platform is operational.
 
-MRML v0 is a forward-test harness for the BSVE → MSML → MPML → MRML
-pipeline. Its purpose is to test whether a strategy configuration
-selected and evaluated by MPML can be operated reliably under
-data-availability constraints, portfolio risk controls, and broker
-execution. MRML is not a second research or walk-forward evaluation
-system.
+The initial strategy/phase interpretation may reuse MPML's current
+TF4/MR42 trend-volatility conventions as a practical starting point.
+These definitions are provisional research choices, not ground truth
+or permanent MRML architecture. MRML will calculate its own market phase
+from its own price data. Differences between OANDA and the historical
+broker/data used by MPML are acceptable for the proof of concept and are
+not a reason to block platform development. Their effects should be
+measured later through benchmarking and back-testing.
+
+### Product and interface design principles
+
+- Keep the platform minimalistic in both implementation and appearance.
+- Prefer a small, clear operational interface and concise status/report
+  views over a feature-rich graphical trading terminal.
+- Do not imitate the layout, charting, or feature set of an existing
+  retail or professional trading platform.
+- Do not build a GUI as a prerequisite for the proof of concept. A
+  command-line workflow, configuration files, structured logs, and
+  compact operational summaries are sufficient initially.
+- Prioritise correctness, observability, safety, and recoverability over
+  visual polish or convenience features.
+
+### Core architectural boundaries
+
+Keep these interfaces independent and replaceable:
+
+1. **MarketDataProvider:** supplies broker or other source market data;
+   MRML normalises it into its own canonical price/bar representation.
+2. **RecommendationProvider:** supplies strategy recommendations.
+   MPML is the first planned provider, not a mandatory dependency of the
+   platform.
+3. **BrokerExecutionProvider:** submits and manages orders and retrieves
+   account, position, and transaction state. OANDA practice is the first
+   implementation.
+
+OANDA may initially implement both market-data and execution interfaces.
+That convenience must not couple the canonical MRML data contract to
+OANDA-specific details. Likewise, recommendations must remain distinct
+from executable orders: MRML independently applies risk limits, checks
+freshness and validity, verifies broker constraints, and may refuse a
+recommendation.
+
+No live capital is in scope for v0. All broker-connected development
+must explicitly use the OANDA practice environment until a separate
+future decision changes that boundary.
+
+## Existing MPML integration — implementation record (2026-11-10)
+
+This section records the MPML runtime and historical-replay integration
+work already completed. It is retained for provenance and future reuse;
+it does not define the new MRML product objective or critical path. MRML's
+primary purpose is now to provide an independent OANDA-connected trading
+and risk platform. MPML is an optional upstream recommendation provider
+that will be integrated after the core platform proof of concept.
 
 The canonical standalone MPML `PhaseAwareStrategy("TF4", "MR42")` +
 `Backtester` path has been audited and frozen in a one-fold EURUSD D1
@@ -32,11 +85,12 @@ Recommendation generation, and research provenance. MPML also owns
 behavioral-prediction consumption and H1→D1 behavioral-feature
 aggregation inside its research pipeline.
 
-**MRML owns forward operation:** broker-facing H1 data ingestion, H1→D1
-**price-bar construction**, current strategy decisions through a
-supported MPML runtime interface, portfolio risk controls, broker
-interaction, operational journaling, reconciliation, and fail-closed
-behavior.
+**MRML owns platform operation:** broker-facing market-data ingestion,
+canonical price-bar construction, independent phase interpretation,
+risk controls, broker interaction, operational journaling,
+reconciliation, and fail-closed behavior. Strategy recommendations
+may be supplied by MPML or another provider through a replaceable
+interface; MRML does not depend on MPML to operate its core platform.
 
 MRML MUST NOT run MPML walk-forward evaluation, retrain models, rank
 strategies, reconstruct evaluation evidence, or independently select a
@@ -75,7 +129,7 @@ remains the canonical historical regression check. This proves
 historical fixture reproducibility; it does **not** prove per-decision
 runtime parity.
 
-**MRML PR2 status at 2026-11-08:** the OHLCV-only boundary is bound to
+**MRML PR2 status at 2026-11-10:** the OHLCV-only boundary is bound to
 MPML's merged causal runtime (`mpml.runtime.phaseaware.latest_decision`,
 MPML `ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`). MRML supplies no phase
 or other prepared field and calculates no MPML feature, indicator or
@@ -90,7 +144,17 @@ signal. Not yet wired into `DailyRunner`. Evidence, kept separate:
     1 xfailed (the strict fixture-prefix test); `test_mpml_binding.py`
     22 passed. Synthetic causal-prefix parity against MPML's canonical
     detector and strategy matched at 69 cutoffs (126 to 600 bars),
-    covering all four phases.
+    covering all four phases. A fresh local rerun on 2026-11-10 used
+    `/tmp/mpml/market-phase-ml`, verified at the pinned revision with a
+    clean tracked tree; `MPML_ROOT=/tmp/mpml/market-phase-ml python -m
+    pytest tests/test_mpml_runtime_integration.py -rs` completed with
+    `5 passed, 1 xfailed` in 12.89 seconds. The xfail is the strict
+    frozen-fixture full-prefix parity test, whose known phase-only
+    divergence is characterized by a separate passing test. An initial
+    attempt to run pytest from the MPML directory collected MPML's own
+    suite and failed collection because `ta` and `matplotlib` were
+    missing; that was not an MRML integration-test failure. The targeted
+    MRML test command is the valid evidence.
 -   Historical causal-prefix fixture: **not investigated.** No search
     for suitable historical D1 OHLCV data with sufficient prehistory was
     carried out, and no separate historical causal-prefix fixture was
@@ -255,304 +319,310 @@ serving in v0.
     exactly; risk, execution, and journaling tests remain unchanged and
     pass.
 
-#### Out of scope
+#### Out of scope for the completed PR2 integration
 
--   Rewriting TF4/MR42 or correcting unrelated legacy
-    indicator/parameter semantics.
--   Changing portfolio risk, sizing, broker execution, order lifecycle,
-    or journal schema.
+-   Rewriting TF4/MR42 or correcting unrelated legacy indicator/parameter
+    semantics as part of the adapter.
 -   Adding live state resolution, selector model-serving, or
     behavioral-prediction aggregation to MRML.
--   Optimizing into a bounded window or persistent incremental strategy
-    state before equivalence is demonstrated.
--   Combining PR2 with H1-to-D1 aggregation changes; that is Integration
-    PR3.
+-   Moving risk, sizing, broker execution, order lifecycle, or journaling
+    into MPML.
+-   Treating this adapter as a required dependency for OANDA platform
+    connectivity or execution.
 
-#### Copilot PR prompt reference
+#### Historical implementation prompt note
 
-When preparing the implementation prompt, instruct Copilot to treat this
-PR2 section as the source of truth, inspect the existing
-`StrategyRunner` and test architecture before editing, and implement
-only the scope above. Require it to report the exact MPML
-revision/interface used, list changed files, explain timing and
-causality, and show test results. Copilot must not invent an MPML API or
-silently duplicate strategy rules in MRML. If the MPML side needs a new
-supported interface, have it propose that as a separately reviewable
-MPML change rather than hiding it inside the MRML adapter.
+The original PR2 implementation prompt treated this section as the
+source of truth for the MPML adapter. That instruction applied to PR2
+only. Future platform work must follow the platform-first delivery plan
+below and must not expand MPML coupling or make MPML parity a prerequisite
+for OANDA data and execution milestones.
 
-## Delivery plan: from merged runtime binding to OANDA demo
+## Delivery plan: platform first, recommendations second (2026-11-12)
 
-This section is the near-term execution plan for turning the merged PR2
-runtime binding into a complete, reproducible MRML dry-run and then an
-OANDA practice/demo forward test. It supplements the original foundation
-phases below; it does not renumber or silently redefine them.
+The previous strategy-integration-first sequence is superseded. The
+critical path is now to establish a minimal but real OANDA practice
+trading platform, then connect recommendations through a replaceable
+provider interface. Historical MPML compatibility and strategy
+benchmarking are not prerequisites for the platform proof of concept.
 
-### Current baseline (2026-11-10)
+### Existing implementation and reusable work
 
--   **PR2 / MPML runtime binding: merged.** MRML calls the pinned MPML
-    causal runtime at `ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`. Hosted
-    CI is green. The local verification checkout is merge commit
-    `1a37af45da8df15e6f51cc48db49c70cc23acf33`; local checks reported
-    112 passed, 7 skipped, Ruff lint and format clean, and mypy clean.
--   The seven local skips were environment-dependent real-MPML/replay
-    tests; the hosted CI job supplies the pinned MPML checkout for its
-    runtime integration tests. Do not interpret local skips as failed
-    tests or as local real-MPML validation.
--   The strategy binding is not wired into `DailyRunner` by default.
--   The frozen EURUSD historical replay fixture remains a separate
-    historical regression oracle, not a causal-prefix oracle.
--   A historical OHLCV causal-prefix fixture has not yet been
-    investigated.
--   TF4 can emit non-flat decisions with `sl_pct = 0`; MRML correctly
-    refuses these as `UnexecutableDecision`. No stop policy is approved.
--   The full end-to-end dry-run entry point and OANDA demo operating
-    loop are not yet complete.
+The repository already contains configuration/contracts, a journal
+schema and persistence layer, risk components, injected orchestration,
+price-bar transformations, and a tested MPML causal-runtime adapter.
+The MPML adapter and its tests are retained as reusable integration
+work, but they are not the next critical-path task and must not dictate
+MRML's canonical data or execution contracts.
 
-### Milestone A --- H1-to-D1 market-price-bar parity (next)
+The MPML runtime binding targets
+`mpml.runtime.phaseaware.latest_decision` at pinned revision
+`ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`. The real-runtime test run
+recorded 5 passed and 1 expected failure; synthetic prefix tests matched
+at 69 cutoffs. The frozen EURUSD fixture's known phase-only prefix
+divergence remains documented. TF4 can emit non-flat decisions with
+`sl_pct = 0`, which MRML currently refuses as `UnexecutableDecision`;
+no stop policy has been approved. `DailyRunner` is not yet wired to this
+provider by default. These facts describe the existing integration,
+not a blocker to OANDA connectivity or order-lifecycle work.
 
-**Purpose:** prove that MRML's H1-to-D1 price-bar construction produces
-the same D1 OHLCV inputs as MPML's canonical D1 market-data preparation
-when given identical hourly data.
+The previous historical EURUSD H1-to-D1 comparison also remains as
+historical compatibility evidence: 175,790 H1 rows, 6,609 bars from the
+MRML aggregation path, 6,575 processed MPML D1 rows, 6,575 common dates
+matching on the compared fields, 34 aggregation-only dates, and no
+processed-only dates. This comparison is not a requirement that OANDA
+must reproduce MPML's historical broker conventions. The 34-date
+coverage question and historical timestamp-label/cutoff question may be
+revisited if they become relevant to a specific provider or evaluation.
 
-**Scope and sequence:**
+### Milestone A — OANDA connectivity and market-data ingestion
 
-1.  Inspect the current MRML H1-to-D1 builder, OANDA candle handling,
-    timestamp conventions, and relevant tests before changing code.
-2.  Inspect MPML's canonical D1 price-data preparation and establish its
-    actual timezone, day boundary, timestamp-label, OHLCV aggregation,
-    volume, and missing-data semantics. Do not infer these from comments
-    or MRML's current defaults.
-3.  Select overlapping historical H1 data that can be fed identically to
-    both implementations. Record provenance, date range, timezone, and
-    source format.
-4.  Compare resulting D1 timestamps and every OHLCV field. Report exact
-    match counts and discrepancies, not just a visual/sample comparison.
-5.  Add focused tests for day boundaries, daylight-saving transitions
-    where relevant, weekends, missing hours, duplicate/out-of-order
-    candles, incomplete current days, and late-arriving data.
-6.  Define deterministic fail-closed behavior for ambiguous or
-    incomplete inputs. Keep tolerated exceptions explicit and tested.
-7.  Preserve the responsibility boundary: MRML aggregates **price
-    bars**; MPML remains responsible for behavioral-feature aggregation.
+**Purpose:** establish a working, observable connection to an OANDA
+practice account and make broker data available through MRML's own
+market-data interface.
 
-**Acceptance evidence:**
+Scope:
 
--   The MPML source revision and exact preparation path are recorded.
--   The comparison dataset and its provenance are reproducible.
--   Identical eligible H1 inputs produce identical D1 timestamps and
-    OHLCV values, or every tolerated difference has a documented
-    explanation and a regression test.
--   Missing, incomplete, ambiguous, duplicated, or late data follows an
-    explicit tested policy.
--   Existing strategy-runtime, risk, journal, and historical replay
-    tests remain green.
+- Confirm practice-account authentication and environment selection.
+- Retrieve account summary, account details, and instrument metadata.
+- Retrieve historical candles and current/latest available market data.
+- Define the smallest useful `MarketDataProvider` contract and an
+  OANDA implementation.
+- Normalise timestamps, instrument identifiers, candle completeness,
+  bid/ask or mid-price fields, and price precision into MRML's canonical
+  representation. Preserve source timestamps and provenance.
+- Establish explicit handling for stale, missing, incomplete, duplicated,
+  or out-of-order data.
+- Build and maintain the price-bar resolutions needed by the initial
+  platform workflow. Do not impose MPML's fixed UTC+1 historical day
+  boundary as a universal MRML convention.
+- Add concise CLI diagnostics or status output for connectivity and
+  data freshness; no elaborate GUI is required.
 
-**Deliverable:** a merged, tested H1-to-D1 implementation with a
-reproducible parity report and fixtures. This milestone validates the
-market-data boundary; it does not by itself create a complete daily
-application.
+Acceptance evidence:
 
-### Milestone B --- Prepare the end-to-end historical input
+- A documented command can authenticate against the practice endpoint
+  and retrieve account and instrument information.
+- Historical and current market data can be retrieved reproducibly.
+- Canonical bars have explicit interval, timestamp, completion, and
+  availability semantics.
+- Tests cover normalisation, missing/stale data, malformed candles,
+  retries, and practice/live endpoint separation.
+- No order submission is needed to complete this milestone.
 
-After Milestone A, establish the deterministic input package used by the
-first complete MRML run.
+**Deliverable:** a tested OANDA practice connectivity and market-data
+path behind MRML's provider boundary.
 
--   Select and document a historical D1 OHLCV series with sufficient
-    prehistory for the pinned MPML runtime's 126-bar minimum and its
-    forward-filled signal state. Prefer a stable start date and preserve
-    the full available prefix rather than arbitrarily truncating it.
--   Where H1 source data is available, retain the source H1 data and the
-    derived D1 bars so the aggregation can be reproduced.
--   Record pair, source, timezone, timestamp convention, date range,
-    missing-data policy, and content hashes.
--   Separately investigate whether suitable historical D1 OHLCV with
-    enough prehistory can support a genuine historical causal-prefix
-    fixture. If it cannot be obtained, record that limitation; synthetic
-    prefix tests must remain labelled synthetic.
--   Keep the frozen EURUSD replay fixture unchanged and separate from
-    this new runtime-input fixture.
+### Milestone B — Position and order lifecycle on OANDA practice
 
-**Deliverable:** a versioned, reproducible historical input fixture
-suitable for repeated end-to-end dry-runs and future causal-prefix
-validation.
+**Purpose:** prove that MRML can operate the complete broker position
+lifecycle independently of any strategy or recommendation system.
 
-### Milestone C --- Resolve execution eligibility and wire the daily path
+Scope:
 
-The current PhaseAware runtime binding is tested, but it is not yet
-wired into `DailyRunner` by default. Before an end-to-end run can
-produce executable entries:
+- Retrieve open positions, pending orders, trades, and transaction
+  history.
+- Submit a deliberately small, controlled practice order from an
+  explicit test command or approved test workflow.
+- Confirm order acceptance, fills, resulting trade/position state, and
+  broker transaction identifiers.
+- Close positions and verify the resulting broker state.
+- Support the required order amendments/protective-order operations
+  exposed by the selected OANDA account/instrument workflow.
+- Use deterministic client identifiers where supported and protect
+  against duplicate submissions.
+- Handle rejections, partial fills, timeouts, ambiguous responses,
+  retries, process restarts, and reconciliation.
+- Keep a durable journal of requests, broker responses, fills, position
+  changes, and reconciliation outcomes, without storing credentials.
 
-1.  Agree an explicit TF4 stop-loss policy for non-flat signals with
-    `sl_pct = 0`, or explicitly constrain the first runnable scenario to
-    decisions that are safely executable under an already approved
-    policy. Do not silently invent an ATR stop or change canonical MPML
-    strategy semantics.
-2.  Inspect the current `DailyRunner` dependency interfaces and wire the
-    MPML-backed strategy through the existing strategy seam with the
-    smallest appropriate change.
-3.  Ensure the runner supplies a validated historical D1 prefix and the
-    newly completed D1 bar, with the correct cutoff and causal timing.
-4.  Ensure risk decisions, rejected decisions, and reasons are
-    journaled.
-5.  Keep the broker executor disabled for the initial dry-run.
+Acceptance evidence:
 
-**Deliverable:** an integration-tested daily orchestration path using
-the actual MPML-backed strategy, with safe handling of unexecutable
-signals and no broker order submission.
+- A practice-account test can open and close a position and verify the
+  resulting state through a fresh broker read.
+- Repeated or ambiguous submissions cannot silently create duplicate
+  exposure.
+- Restart/reconciliation tests recover broker state and identify
+  journal discrepancies.
+- Practice endpoint and credentials are enforced; live trading is
+  explicitly unavailable in v0.
 
-### Milestone D --- First complete, reproducible dry-run
+**Deliverable:** a minimal, auditable OANDA practice order and position
+lifecycle.
 
-This is the first product milestone at which MRML should be considered
-end-to-end runnable.
+### Milestone C — Independent risk and operational safeguards
 
-Provide a documented command or entry point that, using a known
-historical or explicitly supplied market-data input:
+**Purpose:** ensure MRML controls what it is willing and able to execute,
+regardless of the source of a trading instruction.
 
--   loads and validates configuration and the required research bundle;
--   loads the reproducible historical D1 prefix;
--   obtains or constructs the latest eligible completed D1 bar;
--   invokes the pinned MPML PhaseAware runtime through MRML;
--   applies MRML risk checks;
--   records actionable, rejected, and skipped decisions with reasons;
--   persists run metadata and journal records;
--   emits a concise run summary with input provenance, strategy/MPML
-    revision, decision timestamp, risk outcome, and execution status.
+Scope:
 
-**Acceptance evidence:**
+- Establish conservative position sizing and instrument-aware units.
+- Enforce configured exposure and portfolio limits, daily loss limits,
+  and a kill switch.
+- Validate margin/available funds and broker trading constraints before
+  submission where the API exposes the required information.
+- Require protective-order parameters or an explicitly approved
+  alternative risk policy before opening exposure. Do not invent a stop
+  policy to make a strategy executable.
+- Reject stale data, invalid instruments, malformed recommendations,
+  duplicate intents, and unsafe account states.
+- Make all refusals and their reasons auditable.
+- Ensure broker state is authoritative for actual positions and fills;
+  the MRML journal is reconciled against it.
 
--   A clean documented setup can install dependencies and run the
-    command.
--   A fixed fixture produces deterministic decisions and journal outputs
-    across repeated runs.
--   A test covers the full path through the actual runner, not only
-    isolated injected components.
--   No broker order is submitted in dry-run mode.
--   Failure cases (missing/stale data, invalid history, unavailable MPML
-    checkout, unexecutable TF4 stop, and risk rejection) fail closed and
-    leave an auditable result.
+Acceptance evidence:
 
-**Deliverable:** a repeatable historical end-to-end dry-run that can be
-run, inspected, and debugged without broker credentials or live
-services.
+- Unit and integration tests cover risk boundaries, sizing, kill switch,
+  and refusal paths.
+- Broker/journal reconciliation detects missing, duplicated, and
+  mismatched state.
+- Failures default to no new exposure.
 
-### Milestone E --- OANDA practice/demo execution
+**Deliverable:** a broker-connected platform with independent risk
+controls and recoverable operational state.
 
-Only after the dry-run is stable:
+### Milestone D — Minimal end-to-end platform proof of concept
 
--   Complete broker position/order reconciliation against the journal.
--   Implement and test a working OANDA practice order adapter.
--   Preserve deterministic client order IDs and idempotent submission.
--   Handle partial fills, rejected orders, timeouts, retries, and
-    restart/reconciliation scenarios.
--   Record fills, spread, slippage, and broker-vs-journal discrepancies.
--   Keep practice/demo endpoint and credentials enforced; live capital
-    remains outside v0.
+This is the first milestone at which MRML should be considered a
+working trading platform, even though it is not yet strategy-driven.
 
-**Deliverable:** a controlled practice-account execution path with
-reconciliation and failure-recovery tests.
+Provide a small documented workflow that can:
 
-### Milestone F --- Scheduled forward-test operation
+- connect to OANDA practice;
+- retrieve and validate market and account data;
+- accept an explicit test instruction (or a deliberately simple
+  temporary test trigger);
+- apply MRML risk and execution checks;
+- open, monitor, and close a practice position;
+- reconcile broker state with the journal; and
+- emit a concise run summary with timestamps, instrument, order/trade
+  identifiers, fills, costs where available, risk decisions, and final
+  position state.
 
--   Wire the complete approved strategy path into `DailyRunner`.
--   Add process locking, scheduling, alerting, and run summaries.
--   Validate restart behavior, stale/missing data handling, and
-    broker/journal reconciliation.
--   Run repeated dry-runs before enabling practice/demo order
-    submission.
--   Maintain a daily operational record of decisions, skipped trades,
-    fills, costs, slippage, and system failures.
+The workflow should be usable from a terminal and should not depend on
+MPML, MSML, a research bundle, or a GUI. The test trigger is scaffolding
+for proving the platform, not a production strategy.
 
-**Deliverable:** a stable OANDA practice/demo forward-test harness. This
-is not authorization for live-capital trading.
+**Acceptance evidence:** a repeatable practice-account lifecycle test,
+including restart and reconciliation, with no live endpoint or live
+capital access.
 
-### Planning estimates (indicative, not commitments)
+**Deliverable:** a minimal OANDA practice-account trading platform.
 
-Assuming focused work and no major architectural surprises:
+### Milestone E — Generic recommendation interface and initial MPML provider
 
-  ------------------------------------------------------------------------
-  Target                           Indicative effort Meaning
-  --------------------- ---------------------------- ---------------------
-  Milestone A: D1           2--4 focused engineering Validated market-data
-  parity                                        days boundary
+Only after Milestone D is operational, introduce strategy
+recommendations.
 
-  Milestones B--D:           4--8 additional focused Reproducible
-  first complete                    engineering days end-to-end historical
-  dry-run                                            run
+Scope:
 
-  Milestones E--F:             1--3 additional weeks Broker-connected,
-  practice/demo forward                              scheduled operating
-  test                                               loop
-  ------------------------------------------------------------------------
+- Define a provider-neutral `RecommendationProvider` contract. A
+  recommendation should identify instrument, direction/intent,
+  decision time, earliest eligibility time, strategy/provider identity
+  and version, validity/freshness, and any required protective levels or
+  sizing constraints.
+- Keep recommendations separate from orders and broker commands.
+- Implement MPML as the first provider using the existing supported
+  causal PhaseAware runtime where appropriate.
+- MRML constructs its own price history and independently determines
+  the current phase. Initially, it may use MPML's current TF4/MR42
+  trend-volatility definitions as a provisional convention.
+- Allow MPML's strategy recommendation to be used even where OANDA's
+  price feed and broker conventions differ from MPML's historical
+  source. Record the source and differences; do not make exact historical
+  parity a go/no-go criterion for the platform.
+- Keep MRML's risk engine authoritative. An MPML recommendation is not
+  an instruction to submit an order and can be rejected by MRML.
+- Preserve causal timing and provenance, including the input-data source,
+  bar interval, phase definition/version, MPML revision, and recommendation
+  timestamp.
 
-These are planning estimates, not calendar promises. Data availability,
-the TF4 stop-policy decision, broker edge cases, and CI/environment
-issues may change the schedule. The first priority is the complete
-historical dry-run, not rushing into broker execution.
+The initial phase partition is a practical starting point, not a claim
+that TF4/MR42 is the uniquely correct division of trend-volatility
+space. MSML behavioural research may reveal alternative or evolving
+structures. Those findings should inform later experiments, not block
+this first operational integration.
 
-### Critical-path priorities and explicit non-goals
+Acceptance evidence:
 
-The immediate sequence is **A → B → C → D → E → F**. Historical
-causal-prefix fixture investigation can proceed alongside A/B, but
-should not block H1-to-D1 parity if suitable historical data is not
-immediately available.
+- Provider contract tests do not depend on MPML internals.
+- MPML adapter tests verify mapping, provenance, causal timing, and
+  refusal of malformed/stale outputs.
+- MRML risk and execution tests run independently of the provider.
+- A recommendation can be accepted, rejected, or ignored with a clear
+  journal reason.
 
-Do not pull the following into this critical path:
+**Deliverable:** MPML-backed recommendations operating through a
+replaceable provider interface.
 
--   live state resolution or selector model-serving;
--   behavioral-feature aggregation in MRML;
--   alternative strategy compositions;
--   runtime optimization with bounded windows or incremental state
-    before equivalence is demonstrated;
--   live-capital execution.
+### Milestone F — Integrated practice forward test and research refinement
 
-The frozen historical replay, synthetic causal-prefix tests, historical
-runtime-prefix validation, and H1-to-D1 market-bar parity are distinct
-evidence categories. Keep their claims and fixtures separate.
+Scope:
 
-------------------------------------------------------------------------
+- Run OANDA market data → MRML phase interpretation → MPML
+  recommendation → MRML risk → OANDA practice execution.
+- Maintain complete decision, order, fill, position, and reconciliation
+  records.
+- Compare recommendation outcomes against simple baselines and
+  alternative phase definitions through separate back-testing and
+  benchmarking work.
+- Evaluate the effects of historical MPML broker data versus OANDA
+  market data; document differences rather than forcing artificial
+  parity.
+- Incorporate MSML findings as research evidence. Permit alternative
+  phase definitions and recommendation providers without changing the
+  core execution platform.
+- Add scheduling and a compact operational status/reporting workflow
+  only after the manual/command-driven lifecycle is reliable.
 
-### Integration PR3 --- Validate MRML H1-to-D1 market-price-bar parity
+**Deliverable:** a stable OANDA practice forward-test using MPML as the
+initial recommendation provider, with an evidence trail suitable for
+subsequent benchmarking and refinement. This is not authorization for
+live-capital trading.
 
-**Motivation:** MRML receives broker data at H1 resolution but operates
-the v0 PhaseAware strategy on D1 price bars. Different day boundaries,
-timestamp handling, or missing-bar policies could change signals even
-when the strategy implementation is identical.
+### Critical path and explicit non-goals
 
-**Scope:** - Compare MRML's H1→D1 **price-bar construction** with MPML's
-canonical D1 market-data preparation on overlapping historical data. -
-Verify timezone and day-boundary conventions, OHLCV aggregation,
-incomplete bars, missing hours, weekends, and late data. - Record exact
-matching and discrepancy results with reproducible fixtures.
+The new critical path is **A → B → C → D → E → F**. OANDA connectivity,
+data ingestion, order lifecycle, risk, and reconciliation come before
+strategy integration. MPML historical parity, full strategy benchmarking,
+and new MSML phase research are not prerequisites for the platform PoC.
 
-**Acceptance criteria:** - Matching input hours produce matching D1 bars
-under the agreed boundary convention. - Missing, incomplete, or
-ambiguous data is handled deterministically and fails closed where
-required. - Any tolerated differences are explicitly documented and
-tested. - Behavioral-prediction H1→D1 aggregation remains an internal
-MPML responsibility; MRML does not recreate that layer or independently
-construct behavioral features.
+Keep the following outside the initial platform build:
 
-### Non-goals for these integration PRs
+- a feature-rich GUI, advanced charting, or imitation of an existing
+  trading terminal;
+- live-capital trading;
+- selector model-serving or live behavioural-state resolution;
+- behavioural-feature aggregation or research/training pipelines inside
+  MRML;
+- walk-forward evaluation, strategy ranking, or model training inside
+  MRML;
+- premature runtime optimisation or elaborate deployment machinery
+  before the manual practice workflow is proven.
 
--   Moving walk-forward evaluation, training, or strategy ranking into
-    MRML.
--   Adding live behavioral-state resolution or selector model serving to
-    v0.
--   Reimplementing MPML strategy rules in MRML.
--   Changing the risk controller, portfolio policy, broker execution, or
-    order lifecycle.
--   Treating historical replay parity alone as proof of live operational
-    parity.
+The historical replay fixture, synthetic causal-prefix tests, real MPML
+runtime tests, and historical H1-to-D1 comparison remain distinct
+compatibility evidence. None substitutes for the OANDA platform
+acceptance tests.
 
-The existing numbered foundation phases below retain their original
-meaning. This integration sequence does not renumber or redefine them.
+### Parked compatibility work — historical MPML data conventions
 
-## Original foundation schedule (historical; retained for context)
+The former H1-to-D1 parity milestone is retained as optional
+compatibility research, not a platform gate. Revisit only when needed to
+explain a recommendation discrepancy or support a controlled historical
+benchmark. Any such work should establish the relevant source's actual
+bar intervals, timestamps, availability, and missing-data policy. Do not
+force MRML's OANDA canonical data model to reproduce a different broker's
+historical conventions merely to obtain nominal parity.
 
-The dated Week 0 / Phase 1--4 schedule below is the original 2026
-foundation plan. It is retained as historical planning context; the
-current near-term delivery sequence and status are defined in the
-Delivery plan section above.
+## Original foundation schedule (historical; superseded)
+
+The dated Week 0 / Phase 1--4 schedule below is retained only as a
+record of the original foundation plan. Its ordering and dependencies
+are superseded by the platform-first delivery plan above. In particular,
+MPML-identical bar boundaries and strategy integration are no longer
+prerequisites for OANDA connectivity or the platform proof of concept.
 
 ## Week 0 (Thu Oct 8 - Fri Oct 9): unblock, don't build
 
@@ -573,12 +643,11 @@ checks.
 
 ## Phase 2: Data, parity, and risk (Weeks 3-4)
 
-PR4 (Wk3) OANDA client (practice only, requests-based, retries,
-timeouts) + H1-\>D1 bar builder with MPML-identical boundaries; diff on
-overlap. PR5 (Wk3-4) RiskController: flat sizing, currency exposure
+PR4 (Wk3) OANDA practice client (historical and current data, retries,
+timeouts) + MRML-owned canonical price-bar normalisation. PR5 (Wk3-4) RiskController: flat sizing, currency exposure
 caps, kill switch, daily loss limit; property-style tests. PR6 (Wk4)
-StrategyRunner integration, gated by the MPML runtime contract and
-parity criteria in Integration PR2. No state resolver in v0.
+Keep strategy integration deferred until the OANDA practice platform
+and position lifecycle are proven. No state resolver in v0.
 
 ## Phase 3: Execution and burn-in (Weeks 5-6)
 
@@ -594,7 +663,7 @@ checks, per-pair outcome report. PR11 (Wk8) Operational hardening:
 reconciliation diagnostics, alert quality, runbook drills, restore-test
 cadence.
 
-## Later (post-A1/A3 evidence)
+## Later (after the platform proof of concept)
 
 -   Alternative-composition bundles (config changes only where
     possible).

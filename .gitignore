@@ -1,5 +1,8 @@
+trash
+
+.idea
 /old/
-docs/prompts
+/docs/prompts
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
