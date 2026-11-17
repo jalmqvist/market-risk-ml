@@ -381,6 +381,15 @@ revisited if they become relevant to a specific provider or evaluation.
 practice account and make broker data available through MRML's own
 market-data interface.
 
+**A1 implementation record (2026-11-17):** public read-only account and
+instrument methods and `python -m mrml.data.oanda_probe` are implemented.
+Offline tests verify practice-only requests, response validation, retries,
+CLI outcomes, and redaction. No credentialed practice request has been
+performed; real connectivity remains a separate manual acceptance step
+([procedure](../README.md#a1-read-only-oanda-practice-diagnostic)). Canonical
+bar semantics, provenance, and availability remain A2 work; Milestone A
+is not complete.
+
 Scope:
 
 - Confirm practice-account authentication and environment selection.
