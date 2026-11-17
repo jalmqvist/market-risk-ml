@@ -1,10 +1,10 @@
-# MRML Roadmap (v0.4, 2026-11-12)
+# MRML Roadmap (v0.5, 2026-11-17)
 
 ## Scope baseline and guiding principle (v0)
 
 MRML is an independent, minimalistic trading, risk, and operational
 platform. Its first objective is to establish a reliable end-to-end
-connection to an OANDA practice account: retrieve market and account
+connection to an IG Markets demo account: retrieve market and account
 data, open and manage positions, close positions, and reconcile broker
 state with its own journal.
 
@@ -17,7 +17,7 @@ The initial strategy/phase interpretation may reuse MPML's current
 TF4/MR42 trend-volatility conventions as a practical starting point.
 These definitions are provisional research choices, not ground truth
 or permanent MRML architecture. MRML will calculate its own market phase
-from its own price data. Differences between OANDA and the historical
+from its own price data. Differences between IG and the historical
 broker/data used by MPML are acceptable for the proof of concept and are
 not a reason to block platform development. Their effects should be
 measured later through benchmarking and back-testing.
@@ -45,18 +45,18 @@ Keep these interfaces independent and replaceable:
    MPML is the first planned provider, not a mandatory dependency of the
    platform.
 3. **BrokerExecutionProvider:** submits and manages orders and retrieves
-   account, position, and transaction state. OANDA practice is the first
-   implementation.
+   account, position, and transaction state. IG demo is the first
+   operational implementation.
 
-OANDA may initially implement both market-data and execution interfaces.
+IG may initially implement both market-data and execution interfaces.
 That convenience must not couple the canonical MRML data contract to
-OANDA-specific details. Likewise, recommendations must remain distinct
+IG-specific details. Likewise, recommendations must remain distinct
 from executable orders: MRML independently applies risk limits, checks
 freshness and validity, verifies broker constraints, and may refuse a
 recommendation.
 
 No live capital is in scope for v0. All broker-connected development
-must explicitly use the OANDA practice environment until a separate
+must explicitly use the IG demo environment until a separate
 future decision changes that boundary.
 
 ## Existing MPML integration — implementation record (2026-11-10)
@@ -64,7 +64,7 @@ future decision changes that boundary.
 This section records the MPML runtime and historical-replay integration
 work already completed. It is retained for provenance and future reuse;
 it does not define the new MRML product objective or critical path. MRML's
-primary purpose is now to provide an independent OANDA-connected trading
+primary purpose is now to provide an independent broker-connected trading
 and risk platform. MPML is an optional upstream recommendation provider
 that will be integrated after the core platform proof of concept.
 
@@ -336,24 +336,70 @@ The original PR2 implementation prompt treated this section as the
 source of truth for the MPML adapter. That instruction applied to PR2
 only. Future platform work must follow the platform-first delivery plan
 below and must not expand MPML coupling or make MPML parity a prerequisite
-for OANDA data and execution milestones.
+for broker data and execution milestones.
 
-## Delivery plan: platform first, recommendations second (2026-11-12)
+## Broker selection decision — IG demo (2026-11-17)
 
-The previous strategy-integration-first sequence is superseded. The
-critical path is now to establish a minimal but real OANDA practice
-trading platform, then connect recommendations through a replaceable
-provider interface. Historical MPML compatibility and strategy
-benchmarking are not prerequisites for the platform proof of concept.
+**Decision:** IG Markets demo replaces OANDA practice as the initial operational
+broker for the platform-first roadmap. The platform remains broker-independent;
+this is a change of adapter and deployment target, not of MRML's responsibilities
+or the A → B → C → D → E → F delivery sequence.
+
+**Reason and evidence:** API availability for the intended OANDA practice
+integration is constrained by regional/account arrangements, so credentialed
+OANDA connectivity was not established. This is an access limitation, not a
+failure of the existing client or its offline tests. IG Markets provides a
+viable demo API integration path. A preliminary IG demo `POST /session`
+authentication check on 2026-11-17 returned HTTP `200` with both `CST` and
+`X-SECURITY-TOKEN` response headers present.
+
+This establishes **authentication-path feasibility only**, not completion of
+an integrated MRML connectivity milestone. Account discovery, instrument
+metadata, historical/current prices, repeatable session handling, execution,
+and reconciliation remain unverified. Do not record secrets, session tokens,
+or account-specific identifying information in repository files or logs.
+
+**OANDA retention:** GitHub PR #4 (`feat: add OANDA practice connectivity
+diagnostic (A1)`) was merged on 2026-11-17. The read-only
+`src/mrml/data/oanda.py` client, `python -m mrml.data.oanda_probe`, offline
+tests, and documentation are preserved as implemented evidence. A1-OANDA passed
+its reported offline checks and GitHub CI; authenticated API connectivity
+was not verified. Its operational adoption is parked, not deleted and not represented
+as completed broker connectivity. A separate documented decision would be
+required to resume it as an operational provider.
+
+**Broker-specific design constraints:** IG uses API-key/session-token
+credentials and instrument EPIC identifiers, rather than OANDA's account and
+instrument conventions. Keep these at the IG adapter boundary. The first IG
+client should be independent of `OandaClient`; do not subclass it or reuse
+OANDA-specific response models. The future canonical MRML representation must
+handle bid/ask price components, timestamp/availability and completion
+semantics, broker instrument metadata, and provenance without assuming a
+universal mid-price convention. Respect applicable IG historical-price quotas
+and rate limits; prefer bounded requests and eventual incremental local
+persistence rather than bulk reconstruction by default.
+
+**Configuration and secrets:** Supply IG demo credentials through environment
+variables (`MRML_IG_API_KEY`, `MRML_IG_USERNAME`, `MRML_IG_PASSWORD`, with
+`MRML_IG_ENVIRONMENT=demo`). A local Git-ignored `.env` file may supply these
+values at a command-line entry point. Commit only an empty `.env.example`;
+never commit `.env`, credentials, CST, or X-SECURITY-TOKEN. Session credentials
+are ephemeral and must be managed in memory. There is no live endpoint option
+in v0. The exact loading mechanism remains an implementation decision for A1-IG.
+
+## Delivery plan: platform first, recommendations second (updated 2026-11-17)
+
+The previous strategy-integration-first sequence remains superseded. The
+critical path is to establish a minimal real **IG demo trading platform**, then
+connect recommendations through a replaceable provider interface. Historical
+MPML compatibility and strategy benchmarking are not prerequisites.
 
 ### Existing implementation and reusable work
 
-The repository already contains configuration/contracts, a journal
-schema and persistence layer, risk components, injected orchestration,
-price-bar transformations, and a tested MPML causal-runtime adapter.
-The MPML adapter and its tests are retained as reusable integration
-work, but they are not the next critical-path task and must not dictate
-MRML's canonical data or execution contracts.
+The repository already contains configuration/contracts, journal schema and
+persistence, risk components, injected orchestration, price-bar transformations,
+a tested MPML causal-runtime adapter, and the merged read-only OANDA adapter.
+Preserve these. The OANDA implementation is not an operational dependency of IG.
 
 The MPML runtime binding targets
 `mpml.runtime.phaseaware.latest_decision` at pinned revision
@@ -363,269 +409,235 @@ at 69 cutoffs. The frozen EURUSD fixture's known phase-only prefix
 divergence remains documented. TF4 can emit non-flat decisions with
 `sl_pct = 0`, which MRML currently refuses as `UnexecutableDecision`;
 no stop policy has been approved. `DailyRunner` is not yet wired to this
-provider by default. These facts describe the existing integration,
-not a blocker to OANDA connectivity or order-lifecycle work.
+provider by default. These facts do not block IG connectivity.
 
-The previous historical EURUSD H1-to-D1 comparison also remains as
-historical compatibility evidence: 175,790 H1 rows, 6,609 bars from the
-MRML aggregation path, 6,575 processed MPML D1 rows, 6,575 common dates
-matching on the compared fields, 34 aggregation-only dates, and no
-processed-only dates. This comparison is not a requirement that OANDA
-must reproduce MPML's historical broker conventions. The 34-date
-coverage question and historical timestamp-label/cutoff question may be
-revisited if they become relevant to a specific provider or evaluation.
+The earlier historical EURUSD H1-to-D1 comparison remains compatibility
+evidence: 175,790 H1 rows, 6,609 bars from the MRML aggregation path,
+6,575 processed MPML D1 rows, 6,575 matching common dates, 34
+aggregation-only dates, and no processed-only dates. Neither IG nor any
+future provider is required to reproduce that historical broker's bar
+conventions. Investigate coverage or cutoff differences only when relevant.
 
-### Milestone A — OANDA connectivity and market-data ingestion
+### Milestone A — IG demo connectivity and market-data ingestion
 
-**Purpose:** establish a working, observable connection to an OANDA
-practice account and make broker data available through MRML's own
-market-data interface.
+**Purpose:** make IG demo account and market data available through MRML's
+independent market-data boundary, with observable, verified behavior.
 
-**A1 implementation record (2026-11-17):** public read-only account and
-instrument methods and `python -m mrml.data.oanda_probe` are implemented.
-Offline tests verify practice-only requests, response validation, retries,
-CLI outcomes, and redaction. No credentialed practice request has been
-performed; real connectivity remains a separate manual acceptance step
-([procedure](../README.md#a1-read-only-oanda-practice-diagnostic)). Canonical
-bar semantics, provenance, and availability remain A2 work; Milestone A
-is not complete.
+**A1-IG — read-only connectivity (next PR):**
+
+- Use IG's demo REST endpoint exclusively; no live endpoint or order methods.
+- Implement a small standalone IG client, separate from the OANDA client.
+- Authenticate and manage `CST` and `X-SECURITY-TOKEN` safely, including
+  failure/expiry handling appropriate to a bounded diagnostic.
+- Retrieve a read-only account list and summary, with sanitized output.
+- Discover a selected instrument's IG EPIC and relevant metadata.
+- Retrieve a small bounded historical price sample; identify price fields,
+  timestamps, resolution and completeness/availability limitations.
+- Use environment-supplied secrets with optional local `.env` loading at the
+  CLI entry point; no database or MPML prerequisite.
+- Add offline tests for authentication, errors, retries/quotas, validation,
+  redaction, demo-only enforcement, and unexpected payloads.
+- Document the command and manual credentialed demo smoke test. Do not mark
+  IG account/price retrieval as verified until that test succeeds.
+
+**A2-IG — canonical market-data contract:**
+
+- Define the smallest provider-neutral `MarketDataProvider` interface and
+  canonical instrument and price-bar structures needed for initial operation.
+- Explicitly represent IG EPIC-to-MRML instrument mapping, timestamp and
+  interval boundaries, source/receipt/availability time, completeness and
+  price-component semantics (bid/ask; mid only when derived deliberately).
+- Preserve source fields/provenance needed for replay and audit.
+- Validate missing, stale, malformed, duplicated, unordered or interrupted
+  data; distinguish closed-market gaps from an operational data failure.
+- Do not impose MPML's historical fixed UTC+1 D1 boundary as a universal MRML
+  convention or rewrite the existing historical aggregation path for A1.
+
+**A3-IG — incremental ingestion and diagnostics:**
+
+- Support bounded historical and latest-price retrieval, quota-aware retries,
+  incremental updates and appropriate local persistence/caching.
+- Make data freshness, continuity, session health, and request failures
+  inspectable through a minimal CLI/status report.
+- Prove deterministic canonical bar results and explicit refusal of stale
+  or otherwise non-actionable market state.
+
+**Milestone A acceptance evidence:** A documented credentialed IG demo workflow
+retrieves account/instrument data and reproducible historical/current prices;
+canonical bars express time, interval, completeness, price component and
+availability; offline tests cover normal and failure paths, quotas, session
+lifecycle and demo/live separation. No order submission is needed in A.
+
+**Deliverable:** tested IG demo market-data ingestion behind MRML's provider
+boundary. The verified `POST /session` result is an initial prerequisite,
+not completion of A1-IG or Milestone A.
+
+### Milestone B — Position and order lifecycle on IG demo
+
+**Purpose:** demonstrate the complete demo position lifecycle independently
+of any strategy or recommendation provider.
 
 Scope:
 
-- Confirm practice-account authentication and environment selection.
-- Retrieve account summary, account details, and instrument metadata.
-- Retrieve historical candles and current/latest available market data.
-- Define the smallest useful `MarketDataProvider` contract and an
-  OANDA implementation.
-- Normalise timestamps, instrument identifiers, candle completeness,
-  bid/ask or mid-price fields, and price precision into MRML's canonical
-  representation. Preserve source timestamps and provenance.
-- Establish explicit handling for stale, missing, incomplete, duplicated,
-  or out-of-order data.
-- Build and maintain the price-bar resolutions needed by the initial
-  platform workflow. Do not impose MPML's fixed UTC+1 historical day
-  boundary as a universal MRML convention.
-- Add concise CLI diagnostics or status output for connectivity and
-  data freshness; no elaborate GUI is required.
+- Retrieve account positions, working orders, activity/deal history and
+  available broker identifiers through IG's documented read APIs.
+- Submit a deliberately small, explicitly authorized **demo** test order;
+  do not enable autonomous order submission at this stage.
+- Confirm acceptance/rejection, fills, deal confirmation and resulting
+  broker exposure using fresh reads; distinguish requests from confirmed fills.
+- Close and, where needed, modify positions and protective instructions,
+  consistent with IG's instrument, account and order semantics.
+- Reconcile IG deal references/identifiers with MRML's internal journal and
+  establish duplicate-submission protection under ambiguous responses.
+- Test rejections, timeouts, partial/uncertain outcomes, retries, restarts,
+  and broker-state reconciliation; no blind retry of ambiguous writes.
+- Keep a durable audit trail without logging credentials or session tokens.
 
 Acceptance evidence:
 
-- A documented command can authenticate against the practice endpoint
-  and retrieve account and instrument information.
-- Historical and current market data can be retrieved reproducibly.
-- Canonical bars have explicit interval, timestamp, completion, and
-  availability semantics.
-- Tests cover normalisation, missing/stale data, malformed candles,
-  retries, and practice/live endpoint separation.
-- No order submission is needed to complete this milestone.
+- An authorized IG demo test opens and closes a small position and verifies
+  the outcome through an independent fresh broker read.
+- Duplicate and ambiguous requests cannot silently create extra exposure.
+- Restart/reconciliation tests detect journal/broker mismatches.
+- Demo endpoints and account checks are enforced; live trading is unavailable.
 
-**Deliverable:** a tested OANDA practice connectivity and market-data
-path behind MRML's provider boundary.
-
-### Milestone B — Position and order lifecycle on OANDA practice
-
-**Purpose:** prove that MRML can operate the complete broker position
-lifecycle independently of any strategy or recommendation system.
-
-Scope:
-
-- Retrieve open positions, pending orders, trades, and transaction
-  history.
-- Submit a deliberately small, controlled practice order from an
-  explicit test command or approved test workflow.
-- Confirm order acceptance, fills, resulting trade/position state, and
-  broker transaction identifiers.
-- Close positions and verify the resulting broker state.
-- Support the required order amendments/protective-order operations
-  exposed by the selected OANDA account/instrument workflow.
-- Use deterministic client identifiers where supported and protect
-  against duplicate submissions.
-- Handle rejections, partial fills, timeouts, ambiguous responses,
-  retries, process restarts, and reconciliation.
-- Keep a durable journal of requests, broker responses, fills, position
-  changes, and reconciliation outcomes, without storing credentials.
-
-Acceptance evidence:
-
-- A practice-account test can open and close a position and verify the
-  resulting state through a fresh broker read.
-- Repeated or ambiguous submissions cannot silently create duplicate
-  exposure.
-- Restart/reconciliation tests recover broker state and identify
-  journal discrepancies.
-- Practice endpoint and credentials are enforced; live trading is
-  explicitly unavailable in v0.
-
-**Deliverable:** a minimal, auditable OANDA practice order and position
-lifecycle.
+**Deliverable:** a minimal, auditable IG demo order and position lifecycle.
 
 ### Milestone C — Independent risk and operational safeguards
 
-**Purpose:** ensure MRML controls what it is willing and able to execute,
-regardless of the source of a trading instruction.
+**Purpose:** ensure MRML controls execution eligibility regardless of the
+provider of a trading instruction.
 
 Scope:
 
-- Establish conservative position sizing and instrument-aware units.
+- Establish conservative sizing with IG-specific units and contract semantics
+  translated at the broker boundary.
 - Enforce configured exposure and portfolio limits, daily loss limits,
   and a kill switch.
-- Validate margin/available funds and broker trading constraints before
-  submission where the API exposes the required information.
-- Require protective-order parameters or an explicitly approved
-  alternative risk policy before opening exposure. Do not invent a stop
-  policy to make a strategy executable.
+- Validate margin/available funds, minimum deal size, precision, dealing
+  rules and broker constraints before submission where supported.
+- Require protective levels or an explicitly approved alternative policy;
+  do not invent a stop policy to make TF4 executable.
 - Reject stale data, invalid instruments, malformed recommendations,
-  duplicate intents, and unsafe account states.
-- Make all refusals and their reasons auditable.
-- Ensure broker state is authoritative for actual positions and fills;
-  the MRML journal is reconciled against it.
+  duplicate intents, and unsafe account or session state.
+- Journal every refusal with its reason; fail closed on uncertainty.
+- Treat broker state as authoritative for actual positions and fills and
+  reconcile it against MRML's journal.
 
 Acceptance evidence:
 
-- Unit and integration tests cover risk boundaries, sizing, kill switch,
-  and refusal paths.
-- Broker/journal reconciliation detects missing, duplicated, and
-  mismatched state.
+- Unit/integration tests cover risk limits, size, kill switch and refusals.
+- Reconciliation detects missing, duplicated and mismatched state.
 - Failures default to no new exposure.
 
-**Deliverable:** a broker-connected platform with independent risk
+**Deliverable:** an IG demo-connected platform with independent risk
 controls and recoverable operational state.
 
 ### Milestone D — Minimal end-to-end platform proof of concept
 
-This is the first milestone at which MRML should be considered a
-working trading platform, even though it is not yet strategy-driven.
+This is the first milestone at which MRML should be considered a working
+trading platform, even though it is not yet strategy-driven.
 
-Provide a small documented workflow that can:
+Provide a small documented terminal workflow that:
 
-- connect to OANDA practice;
-- retrieve and validate market and account data;
-- accept an explicit test instruction (or a deliberately simple
-  temporary test trigger);
-- apply MRML risk and execution checks;
-- open, monitor, and close a practice position;
-- reconcile broker state with the journal; and
-- emit a concise run summary with timestamps, instrument, order/trade
-  identifiers, fills, costs where available, risk decisions, and final
-  position state.
+- connects to IG demo and validates market/account data;
+- accepts a deliberately explicit test instruction;
+- applies MRML risk and eligibility checks;
+- opens, monitors, and closes a demo position;
+- reconciles broker state against the journal; and
+- emits a concise report with timestamps, EPIC/instrument, deal identifiers,
+  fills/costs where available, risk decisions and final position state.
 
-The workflow should be usable from a terminal and should not depend on
-MPML, MSML, a research bundle, or a GUI. The test trigger is scaffolding
-for proving the platform, not a production strategy.
+It must not depend on MPML, MSML, a research bundle or a GUI. The manual test
+trigger is scaffolding, not an approved production strategy.
 
-**Acceptance evidence:** a repeatable practice-account lifecycle test,
-including restart and reconciliation, with no live endpoint or live
-capital access.
+**Acceptance evidence:** a repeatable IG demo lifecycle test including restart
+and reconciliation, with no live endpoint or capital access.
 
-**Deliverable:** a minimal OANDA practice-account trading platform.
+**Deliverable:** a minimal IG demo trading platform.
 
 ### Milestone E — Generic recommendation interface and initial MPML provider
 
-Only after Milestone D is operational, introduce strategy
-recommendations.
+Only after Milestone D is operational, introduce recommendations.
 
 Scope:
 
-- Define a provider-neutral `RecommendationProvider` contract. A
-  recommendation should identify instrument, direction/intent,
-  decision time, earliest eligibility time, strategy/provider identity
-  and version, validity/freshness, and any required protective levels or
-  sizing constraints.
-- Keep recommendations separate from orders and broker commands.
+- Define provider-neutral `RecommendationProvider` objects carrying
+  instrument, direction/intent, decision time, earliest eligibility,
+  provenance/version, expiry/freshness and protective/sizing constraints.
+- Keep recommendations separate from orders or broker instructions.
 - Implement MPML as the first provider using the existing supported
   causal PhaseAware runtime where appropriate.
-- MRML constructs its own price history and independently determines
-  the current phase. Initially, it may use MPML's current TF4/MR42
-  trend-volatility definitions as a provisional convention.
-- Allow MPML's strategy recommendation to be used even where OANDA's
-  price feed and broker conventions differ from MPML's historical
-  source. Record the source and differences; do not make exact historical
-  parity a go/no-go criterion for the platform.
-- Keep MRML's risk engine authoritative. An MPML recommendation is not
-  an instruction to submit an order and can be rejected by MRML.
-- Preserve causal timing and provenance, including the input-data source,
-  bar interval, phase definition/version, MPML revision, and recommendation
-  timestamp.
-
-The initial phase partition is a practical starting point, not a claim
-that TF4/MR42 is the uniquely correct division of trend-volatility
-space. MSML behavioural research may reveal alternative or evolving
-structures. Those findings should inform later experiments, not block
-this first operational integration.
+- MRML builds its own IG-derived price history and market-phase context.
+  MPML's existing TF4/MR42 conventions may be a provisional starting point,
+  not a permanent or uniquely correct partition of trend-volatility space.
+- Record and later evaluate IG-versus-historical-broker price differences
+  rather than forcing artificial MPML price parity.
+- Keep MRML risk authoritative: any recommendation may be rejected or ignored.
+- Preserve causal timing, phase-definition/version, instrument mapping,
+  source/granularity and MPML revision in the audit trail.
 
 Acceptance evidence:
 
-- Provider contract tests do not depend on MPML internals.
-- MPML adapter tests verify mapping, provenance, causal timing, and
-  refusal of malformed/stale outputs.
-- MRML risk and execution tests run independently of the provider.
-- A recommendation can be accepted, rejected, or ignored with a clear
-  journal reason.
+- Provider contract tests are independent of MPML internals.
+- MPML mapping/provenance/timing and invalid/stale-output refusals are tested.
+- Risk and execution tests run independently of recommendation providers.
+- Accepted, rejected and ignored recommendations have journal reasons.
 
-**Deliverable:** MPML-backed recommendations operating through a
-replaceable provider interface.
+**Deliverable:** MPML-backed recommendations behind a replaceable interface.
 
-### Milestone F — Integrated practice forward test and research refinement
+### Milestone F — Integrated demo forward test and research refinement
 
 Scope:
 
-- Run OANDA market data → MRML phase interpretation → MPML
-  recommendation → MRML risk → OANDA practice execution.
-- Maintain complete decision, order, fill, position, and reconciliation
-  records.
-- Compare recommendation outcomes against simple baselines and
-  alternative phase definitions through separate back-testing and
-  benchmarking work.
-- Evaluate the effects of historical MPML broker data versus OANDA
-  market data; document differences rather than forcing artificial
-  parity.
-- Incorporate MSML findings as research evidence. Permit alternative
-  phase definitions and recommendation providers without changing the
-  core execution platform.
-- Add scheduling and a compact operational status/reporting workflow
-  only after the manual/command-driven lifecycle is reliable.
+- Run IG market data → MRML market-phase interpretation → MPML
+  recommendation → MRML risk → IG demo execution.
+- Maintain complete decision, order, fill, position and reconciliation logs.
+- Benchmark outcomes against simple baselines and alternative phase
+  definitions in separately controlled research and evaluation work.
+- Evaluate differences between IG price data and historical MPML broker data;
+  document, rather than force, parity.
+- Incorporate MSML evidence without moving training/research into MRML.
+- Add scheduling and concise operational reporting only once the manual
+  lifecycle is reliable.
 
-**Deliverable:** a stable OANDA practice forward-test using MPML as the
-initial recommendation provider, with an evidence trail suitable for
-subsequent benchmarking and refinement. This is not authorization for
-live-capital trading.
+**Deliverable:** a stable IG demo forward test with MPML as the initial
+recommendation provider. This is not authorization for live-capital trading.
 
 ### Critical path and explicit non-goals
 
-The new critical path is **A → B → C → D → E → F**. OANDA connectivity,
-data ingestion, order lifecycle, risk, and reconciliation come before
-strategy integration. MPML historical parity, full strategy benchmarking,
-and new MSML phase research are not prerequisites for the platform PoC.
+The critical path remains **A → B → C → D → E → F**, now on IG demo.
+Broker data and operations, risk, and reconciliation precede strategy
+integration. MPML historical parity, full strategy benchmarking and new
+MSML phase research are not prerequisites for the platform PoC.
 
-Keep the following outside the initial platform build:
+Outside initial scope:
 
-- a feature-rich GUI, advanced charting, or imitation of an existing
-  trading terminal;
-- live-capital trading;
-- selector model-serving or live behavioural-state resolution;
-- behavioural-feature aggregation or research/training pipelines inside
-  MRML;
-- walk-forward evaluation, strategy ranking, or model training inside
-  MRML;
-- premature runtime optimisation or elaborate deployment machinery
-  before the manual practice workflow is proven.
+- live-capital trading and live IG endpoints;
+- feature-rich GUIs or retail-terminal imitation;
+- selector serving or behavioural-state resolution;
+- behavioural aggregation, model training, walk-forward evaluation or
+  strategy ranking inside MRML;
+- bulk IG historical backfills that risk consuming broker quotas;
+- premature optimization, deployment and scheduling before manual proof.
 
-The historical replay fixture, synthetic causal-prefix tests, real MPML
-runtime tests, and historical H1-to-D1 comparison remain distinct
-compatibility evidence. None substitutes for the OANDA platform
-acceptance tests.
+Historical replay, synthetic prefix tests, real MPML runtime tests and the
+historical H1-to-D1 comparison remain distinct compatibility evidence. None
+substitutes for IG demo platform acceptance tests.
 
 ### Parked compatibility work — historical MPML data conventions
 
-The former H1-to-D1 parity milestone is retained as optional
-compatibility research, not a platform gate. Revisit only when needed to
-explain a recommendation discrepancy or support a controlled historical
-benchmark. Any such work should establish the relevant source's actual
-bar intervals, timestamps, availability, and missing-data policy. Do not
-force MRML's OANDA canonical data model to reproduce a different broker's
-historical conventions merely to obtain nominal parity.
+The former H1-to-D1 parity milestone remains optional compatibility research,
+not a platform gate. Revisit only when explaining recommendation differences
+or supporting a controlled historical benchmark, using the relevant source's
+actual intervals, timestamps, availability and missing-data policy. Do not
+force IG-derived MRML canonical bars to reproduce another broker's historical
+conventions solely for nominal parity.
 
 ## Original foundation schedule (historical; superseded)
+
+**Archive note (2026-11-17):** OANDA references below are retained verbatim
+as historical planning records. They are not current implementation targets.
 
 The dated Week 0 / Phase 1--4 schedule below is retained only as a
 record of the original foundation plan. Its ordering and dependencies
