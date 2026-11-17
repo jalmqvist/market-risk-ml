@@ -166,3 +166,64 @@ separate H1-to-D1 market-bar parity work.
 -   [Roadmap](docs/ROADMAP.md)
 -   [ADRs](docs/adr/ADRs.md)
 -   [Changelog](docs/CHANGELOG.md)
+
+## A1: read-only OANDA practice diagnostic
+
+A1 checks practice authentication, identifies or validates an account, retrieves
+its summary and available instrument metadata, and validates a small H1 mid-price
+candle sample. It runs independently of PostgreSQL, bundles, the journal, strategies,
+and MPML. It only issues GET requests to
+`https://api-fxpractice.oanda.com/v3`; redirects are rejected and no order or
+position mutation is supported. There is no live-endpoint option.
+
+Create an OANDA **practice** account and generate a personal API access token in
+OANDA's account management UI. Install MRML using the setup instructions above.
+Provide `MRML_OANDA_TOKEN` through your local environment or secret manager;
+do not paste credentials into commands, shell history, logs, or source control.
+For example, in Bash, enter the token silently when prompted:
+
+```sh
+read -r -s -p 'OANDA practice token: ' MRML_OANDA_TOKEN; echo
+export MRML_OANDA_TOKEN
+# Optional when exactly one account is accessible; otherwise set the practice ID:
+# export MRML_OANDA_ACCOUNT_ID='<your practice account ID>'
+export MRML_OANDA_INSTRUMENT=EUR_USD  # optional; this is the default
+python -m mrml.data.oanda_probe
+unset MRML_OANDA_TOKEN
+```
+
+`MRML_OANDA_TOKEN` is required and must contain no whitespace.
+`MRML_OANDA_ACCOUNT_ID` must use OANDA's `NNN-NNN-NNNNNNN-NNN` format when set;
+an empty value is invalid. Without it, discovery must return exactly one account.
+`MRML_OANDA_INSTRUMENT` must name an instrument available to that account.
+The probe does not load `.env` or other credential files, or global application
+settings; `MRML_DATABASE_URL` is unnecessary. `MRML_ALLOW_LIVE` and application
+endpoint settings cannot redirect this command.
+
+Example sanitized output (counts and dates vary):
+
+```text
+PASS OANDA practice (read-only): account validated; currency=USD; instruments=68
+EUR_USD H1 mid: candles=48 complete=48 incomplete=0; range=2026-11-13T12:00:00+00:00..2026-11-17T11:00:00+00:00
+```
+
+The window covers the 96 UTC hours before the current UTC hour, with at most 96
+candles and no pagination. Market closures can reduce the count. Empty, malformed,
+unsorted, duplicated, out-of-window, or invalid OHLCV data fails validation.
+Incomplete candles are counted separately. Timestamps identify candle opens.
+The command returns 0 on PASS and 1 on FAIL. Output omits account IDs, tokens,
+balances, and raw responses; transport debug logs are suppressed during requests.
+
+- HTTP 401/403: check the practice token's validity and account access.
+- Account discovery failure: explicitly configure the intended practice account ID.
+- HTTP 404: verify the configured account and its practice environment.
+- Unavailable instrument: select an instrument offered by that account.
+- HTTP 429/5xx or timeouts: bounded retries were exhausted; check connectivity or
+  service availability and retry later. Redirects and other HTTP errors fail directly.
+- Malformed response: the returned data did not satisfy the expected v20 contract.
+
+Offline tests verify the workflow with fake sessions and never call OANDA.
+**A real credentialed practice smoke test remains a separate manual acceptance
+step.** A1 does not establish execution readiness or change daily aggregation.
+A2 should address canonical bar contracts, price components, provenance, and
+availability before broader market-data ingestion.
