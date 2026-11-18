@@ -21,8 +21,8 @@ python -m pip install -r requirements-dev.txt
 cp .env.example .env
 ```
 
-Review `.env` and replace development credentials before starting
-services; set `MRML_DATABASE_URL` to the configured Postgres username,
+Fill the applicable placeholders in `.env` before starting services. Set
+`MRML_DATABASE_URL` to the configured Postgres username,
 password, and database. The `MRML_DATABASE_URL` setting is required when
 calling `load_settings()`. Settings use the `MRML_` prefix; environment
 defaults to `dev`. `live` remains guarded by the explicit
@@ -227,3 +227,41 @@ Offline tests verify the workflow with fake sessions and never call OANDA.
 step.** A1 does not establish execution readiness or change daily aggregation.
 A2 should address canonical bar contracts, price components, provenance, and
 availability before broader market-data ingestion.
+
+## A1-IG demo connectivity diagnostic
+
+The standalone probe signs in to IG Markets demo, lists accessible accounts,
+validates an EUR/USD market, and checks up to 32 hourly bid and ask OHLC
+observations. It uses the IG demo gateway and requires no database or strategy
+runtime.
+
+For a local smoke test, install MRML using the setup commands above and supply
+these variables through the environment or the Git-ignored `.env` in the
+repository root. Exported values take precedence over `.env`.
+
+| Variable | Value |
+| --- | --- |
+| `MRML_IG_ENVIRONMENT` | Required, set to `demo` |
+| `MRML_IG_API_KEY` | Required, IG demo API key |
+| `MRML_IG_USERNAME` | Required, IG demo username |
+| `MRML_IG_PASSWORD` | Required, IG demo password |
+| `MRML_IG_EPIC` | Optional EUR/USD EPIC accessible to the demo account |
+
+Run from the repository root:
+
+```sh
+python -m mrml.data.ig_probe
+```
+
+Expect `Result: PASS` (exit 0) after authentication, accounts, market selection
+and historical validation each succeed. On `Result: FAIL` (exit 1), check the
+reported stage. If search is ambiguous or exceeds one page, set the EUR/USD EPIC
+for the intended instrument and rerun. An expired session requires rerunning
+the probe.
+
+The probe uses session V2, accounts V1, market search and details V2, and
+historical prices V3. Historical requests consume IG data-point allowance.
+Avoid polling the probe and use the reported remaining points and reset interval
+when available. A closed market can still have usable history. The probe reports
+hourly gaps and leaves observation completeness unknown. It preserves bid and
+ask separately, without defining canonical MRML bars.
