@@ -1,5 +1,7 @@
 # MRML Roadmap (v0.5, 2026-11-17)
 
+> **A1-IG operational verification (2026-11-18):** The read-only IG demo diagnostic completed successfully, including authenticated session creation, account discovery, EUR/USD instrument validation, and retrieval of a bounded 32-observation H1 bid/ask historical sample. No execution operations were exercised. Canonical bar semantics and incremental ingestion remain A2/A3 work.
+
 ## Scope baseline and guiding principle (v0)
 
 MRML is an independent, minimalistic trading, risk, and operational
