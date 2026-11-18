@@ -21,8 +21,8 @@ python -m pip install -r requirements-dev.txt
 cp .env.example .env
 ```
 
-Fill the applicable placeholders in `.env` before starting services. Set
-`MRML_DATABASE_URL` to the configured Postgres username,
+Review `.env` and replace development credentials before starting
+services; set `MRML_DATABASE_URL` to the configured Postgres username,
 password, and database. The `MRML_DATABASE_URL` setting is required when
 calling `load_settings()`. Settings use the `MRML_` prefix; environment
 defaults to `dev`. `live` remains guarded by the explicit
@@ -235,9 +235,10 @@ validates an EUR/USD market, and checks up to 32 hourly bid and ask OHLC
 observations. It uses the IG demo gateway and requires no database or strategy
 runtime.
 
-For a local smoke test, install MRML using the setup commands above and supply
-these variables through the environment or the Git-ignored `.env` in the
-repository root. Exported values take precedence over `.env`.
+For a local smoke test, install MRML using the setup commands above. If using
+the Git-ignored `.env` copied from `.env.example`, fill in the three IG demo
+credentials. The template already sets `MRML_IG_ENVIRONMENT=demo`. These values
+can also be exported in the shell, where they take precedence over `.env`.
 
 | Variable | Value |
 | --- | --- |
