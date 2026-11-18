@@ -423,22 +423,12 @@ conventions. Investigate coverage or cutoff differences only when relevant.
 **Purpose:** make IG demo account and market data available through MRML's
 independent market-data boundary, with observable, verified behavior.
 
-**A1-IG — read-only connectivity (next PR):**
+**A1-IG — read-only connectivity:**
 
-- Use IG's demo REST endpoint exclusively; no live endpoint or order methods.
-- Implement a small standalone IG client, separate from the OANDA client.
-- Authenticate and manage `CST` and `X-SECURITY-TOKEN` safely, including
-  failure/expiry handling appropriate to a bounded diagnostic.
-- Retrieve a read-only account list and summary, with sanitized output.
-- Discover a selected instrument's IG EPIC and relevant metadata.
-- Retrieve a small bounded historical price sample; identify price fields,
-  timestamps, resolution and completeness/availability limitations.
-- Use environment-supplied secrets with optional local `.env` loading at the
-  CLI entry point; no database or MPML prerequisite.
-- Add offline tests for authentication, errors, retries/quotas, validation,
-  redaction, demo-only enforcement, and unexpected payloads.
-- Document the command and manual credentialed demo smoke test. Do not mark
-  IG account/price retrieval as verified until that test succeeds.
+The standalone `python -m mrml.data.ig_probe` diagnostic implements demo
+session authentication, a sanitized account list, EUR/USD EPIC selection, and a
+bounded H1 bid/ask sample. Offline tests cover the workflow with simulated IG
+responses. Operational verification remains pending a local credentialed run.
 
 **A2-IG — canonical market-data contract:**
 
