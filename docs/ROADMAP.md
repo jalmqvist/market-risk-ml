@@ -1,6 +1,6 @@
-# MRML Roadmap (v0.5, 2026-11-17)
+# MRML Roadmap (v0.6, 2026-11-19)
 
-> **A1-IG operational verification (2026-11-18):** The read-only IG demo diagnostic completed successfully, including authenticated session creation, account discovery, EUR/USD instrument validation, and retrieval of a bounded 32-observation H1 bid/ask historical sample. No execution operations were exercised. Canonical bar semantics and incremental ingestion remain A2/A3 work.
+> **Current status (2026-11-19):** A1-IG is merged and operationally verified within its read-only scope: the IG demo diagnostic completed authentication, account discovery, explicit EUR/USD instrument validation, and retrieval of 32 H1 bid/ask observations. A2 will define canonical market-data semantics; A3 will implement PostgreSQL-backed incremental ingestion. No execution operations were exercised.
 
 ## Scope baseline and guiding principle (v0)
 
@@ -60,6 +60,61 @@ recommendation.
 No live capital is in scope for v0. All broker-connected development
 must explicitly use the IG demo environment until a separate
 future decision changes that boundary.
+
+### Durable persistence architecture — PostgreSQL (decision 2026-11-19)
+
+**Decision:** PostgreSQL is the preferred primary durable store for MRML's
+operational records **and** broker market data. This extends the existing
+SQLAlchemy/Alembic journal and database infrastructure; it does not replace
+IG as the authority for actual account balances, orders, fills, and positions.
+MRML's stored broker state must be reconciled with fresh broker reads.
+
+The initial implementation may use one PostgreSQL instance with logically
+separated market-data and operational tables. Separate databases, specialised
+time-series extensions, and distributed services are not prerequisites. The
+canonical `MarketDataProvider` and price models must remain usable without
+PostgreSQL or SQLAlchemy, including in deterministic offline tests.
+
+**Planned persistence responsibilities:**
+
+- **Source observations:** retain original IG bid/ask OHLC values, source EPIC,
+  timeframe, source timestamp, response metadata where useful, retrieval time,
+  and provenance sufficient to reproduce canonical transformations. Do not
+  invent volume or broker-confirmed completeness fields absent from the source.
+- **Canonical data:** store explicitly versioned MRML instrument mappings,
+  interval boundaries, price-component and derivation policies, completion and
+  availability evidence, and validation results. Permit deterministic rebuilding
+  when interpretation or normalization rules change.
+- **Ingestion state:** track bounded request windows, successfully committed
+  intervals, gaps and their evidential classification, provisional observations,
+  failures, and available quota information. Checkpoints must advance only
+  after durable, validated writes; retries and restarts must be idempotent.
+- **Operational state:** retain independent risk decisions, order intents,
+  broker confirmations, fills, reconciliation outcomes, and audit history in
+  the existing journal architecture. These records must not be conflated with
+  market-data observations.
+
+Use stable source keys (provider, source instrument ID, resolution, interval)
+and explicitly defined update/revision semantics. Repeated retrievals of a
+provisional candle must not silently destroy earlier evidence. Avoid writing
+credentials, session tokens, private account details, or unredacted sensitive
+responses to the database or logs.
+
+**Sequencing:** A2 defines persistence-compatible canonical structures,
+identity, temporal semantics, and validation with no database migrations.
+A3 implements PostgreSQL market-data tables, incremental ingestion, recovery,
+and quota-aware reuse of stored history. Later milestones reuse the same
+durable infrastructure for execution and reconciliation. A database is not a
+prerequisite for the existing A1 diagnostic.
+
+**Quota rationale:** IG's default historical-data allowance is 10,000 price
+data points per week (subject to account/API policy). Routine H1 ingestion for
+a small FX universe should be comparatively modest when each completed
+interval is fetched once; repeated overlapping history downloads and bulk
+backfills can exhaust the allowance. Prefer cached/local history and bounded
+catch-up requests, with explicit accounting for re-fetches, provisional bars,
+and historical-data quotas. Do not equate the historical-price allowance with
+all REST or streaming operations.
 
 ## Existing MPML integration — implementation record (2026-11-10)
 
@@ -355,11 +410,13 @@ viable demo API integration path. A preliminary IG demo `POST /session`
 authentication check on 2026-11-17 returned HTTP `200` with both `CST` and
 `X-SECURITY-TOKEN` response headers present.
 
-This establishes **authentication-path feasibility only**, not completion of
-an integrated MRML connectivity milestone. Account discovery, instrument
-metadata, historical/current prices, repeatable session handling, execution,
-and reconciliation remain unverified. Do not record secrets, session tokens,
-or account-specific identifying information in repository files or logs.
+The preliminary result was superseded by the **A1-IG read-only operational
+verification on 2026-11-18**, after PR #5 was merged: the diagnostic completed
+authentication, account discovery, explicit EUR/USD EPIC validation, and a
+bounded 32-observation H1 bid/ask history request. This does not verify
+current-price ingestion, candle finality, execution, or reconciliation. Do not
+record secrets, session tokens, or account-specific identifying information in
+repository files or logs.
 
 **OANDA retention:** GitHub PR #4 (`feat: add OANDA practice connectivity
 diagnostic (A1)`) was merged on 2026-11-17. The read-only
@@ -387,9 +444,10 @@ variables (`MRML_IG_API_KEY`, `MRML_IG_USERNAME`, `MRML_IG_PASSWORD`, with
 values at a command-line entry point. Commit only an empty `.env.example`;
 never commit `.env`, credentials, CST, or X-SECURITY-TOKEN. Session credentials
 are ephemeral and must be managed in memory. There is no live endpoint option
-in v0. The exact loading mechanism remains an implementation decision for A1-IG.
+in v0. A1-IG loads local `.env` values at its CLI boundary, with exported
+environment variables taking precedence.
 
-## Delivery plan: platform first, recommendations second (updated 2026-11-17)
+## Delivery plan: platform first, recommendations second (updated 2026-11-19)
 
 The previous strategy-integration-first sequence remains superseded. The
 critical path is to establish a minimal real **IG demo trading platform**, then
@@ -400,8 +458,10 @@ MPML compatibility and strategy benchmarking are not prerequisites.
 
 The repository already contains configuration/contracts, journal schema and
 persistence, risk components, injected orchestration, price-bar transformations,
-a tested MPML causal-runtime adapter, and the merged read-only OANDA adapter.
-Preserve these. The OANDA implementation is not an operational dependency of IG.
+a tested MPML causal-runtime adapter, and merged read-only OANDA and IG demo
+adapters. Preserve these. Neither the OANDA adapter nor the MPML runtime is an
+operational dependency of A2/A3. Existing database scaffolding is reusable,
+but production PostgreSQL market-data ingestion has not yet been implemented.
 
 The MPML runtime binding targets
 `mpml.runtime.phaseaware.latest_decision` at pinned revision
@@ -428,41 +488,81 @@ independent market-data boundary, with observable, verified behavior.
 **A1-IG — read-only connectivity:**
 
 The standalone `python -m mrml.data.ig_probe` diagnostic implements demo
-session authentication, a sanitized account list, EUR/USD EPIC selection, and a
-bounded H1 bid/ask sample. Offline tests cover the workflow with simulated IG
-responses. Operational verification remains pending a local credentialed run.
+session authentication, a sanitized account list, explicit EUR/USD EPIC
+selection, and a bounded H1 bid/ask sample. The implementation was merged in
+PR #5. Offline tests cover the workflow with simulated IG responses. A
+credentialed, read-only run on 2026-11-18 completed all stages and returned
+`Result: PASS`, with 32 H1 observations and historical allowance metadata.
+A1-IG is complete within this bounded read-only scope; canonical data,
+operational ingestion, and execution remain separate milestones.
 
 **A2-IG — canonical market-data contract:**
 
-- Define the smallest provider-neutral `MarketDataProvider` interface and
-  canonical instrument and price-bar structures needed for initial operation.
-- Explicitly represent IG EPIC-to-MRML instrument mapping, timestamp and
-  interval boundaries, source/receipt/availability time, completeness and
-  price-component semantics (bid/ask; mid only when derived deliberately).
-- Preserve source fields/provenance needed for replay and audit.
-- Validate missing, stale, malformed, duplicated, unordered or interrupted
-  data; distinguish closed-market gaps from an operational data failure.
-- Do not impose MPML's historical fixed UTC+1 D1 boundary as a universal MRML
-  convention or rewrite the existing historical aggregation path for A1.
+- Define the smallest provider-neutral `MarketDataProvider` read interface
+  and immutable canonical FX instrument and H1 source-bar structures. Keep
+  broker-specific IG EPICs distinct from MRML instrument identity, including
+  product variants that must not be silently treated as interchangeable.
+- Preserve bid and ask OHLC components. Derive midpoint data only through an
+  explicit, documented policy; componentwise averaged high/low are not
+  necessarily extrema of an observed midpoint path. Do not infer tick volume.
+- Record source timestamps and their supported interpretation, UTC interval
+  start/end, retrieval time, and known/unknown first-availability evidence.
+  Do not fabricate a source timestamp meaning or availability instant.
+- Distinguish confirmed complete, confirmed incomplete, and **unknown** candle
+  finality. IG historical retrieval success alone is not proof of a completed
+  candle; a clock-based inference is not broker confirmation.
+- Validate malformed, duplicated, unordered, overlapping, stale, or missing
+  observations with explicit outcomes and consumer-supplied eligibility rules.
+  Distinguish **calendar-time continuity**, **trading-session continuity**, and
+  **candle completeness**. Calendar gaps are not automatically data failures.
+- Market-closure classifications require adequate session evidence. Do not
+  treat a Friday-to-Monday gap as a defect merely because calendar hours are
+  absent; equally, do not label any unexplained gap as an expected closure
+  solely by weekday arithmetic. Preserve unknown causes as unknown.
+- Establish stable source identity, interval keys, provenance and revision
+  semantics suitable for later PostgreSQL persistence; use pure, deterministic
+  IG-to-canonical transformations and offline tests. No A2 migrations or
+  historical backfill service.
+- Preserve legacy `H1Bar`, `D1Bar`, `build_d1_bars`, `DailyRunner`, and MPML
+  runtime behavior. The existing strict 24-consecutive-H1 aggregation rule
+  and daily calendar-contiguity checks are **historical MRML scaffold rules**,
+  not universal MRML market-data requirements. Do not automatically bridge
+  new canonical bars into those consumers or force MPML's fixed UTC+1 D1
+  convention onto IG data. Resolve any MPML-specific calendar/aggregation
+  compatibility questions through explicit source audits later.
 
 **A3-IG — incremental ingestion and diagnostics:**
 
+- Implement PostgreSQL-backed market-data persistence using the repository's
+  SQLAlchemy/Alembic conventions. Keep source observations, canonical data,
+  ingestion checkpoints, and operational journal records logically distinct.
+- Retrieve bounded missing or provisional H1 intervals, rather than repeatedly
+  downloading overlapping history. Validate and commit data transactionally;
+  advance checkpoints only after successful commits. Make duplicate requests,
+  retries and restarts idempotent, with explicit revision handling.
 - Support bounded historical and latest-price retrieval, quota-aware retries,
-  incremental updates and appropriate local persistence/caching.
-- Make data freshness, continuity, session health, and request failures
-  inspectable through a minimal CLI/status report.
-- Prove deterministic canonical bar results and explicit refusal of stale
-  or otherwise non-actionable market state.
+  local reuse/caching, and conservative catch-up behavior. Do not undertake
+  unbounded backfills to populate the initial database.
+- Track quota metadata, observed gaps, retrieval failures, session health,
+  freshness, and continuity through concise read-only CLI/status output.
+- Ensure valid market closures do not trigger spurious gap-repair loops;
+  unresolved trading-session gaps remain visible and fail closed when relevant.
+- Test deterministic normalization, persistence round-trips, transactional
+  failures, idempotency, recovery, schema migration and refusal of stale or
+  insufficiently supported data. Use offline/isolated database tests; do not
+  require live credentials in CI.
 
-**Milestone A acceptance evidence:** A documented credentialed IG demo workflow
-retrieves account/instrument data and reproducible historical/current prices;
-canonical bars express time, interval, completeness, price component and
-availability; offline tests cover normal and failure paths, quotas, session
-lifecycle and demo/live separation. No order submission is needed in A.
+**Milestone A acceptance evidence:** A1-IG's credentialed read-only diagnostic
+is complete. A2 must prove deterministic, source-faithful canonical bars and
+explicit eligibility/continuity semantics. A3 must demonstrate bounded
+historical/current ingestion with PostgreSQL persistence, quota-aware requests,
+idempotency, restart recovery and fresh-status diagnostics. Tests must cover
+normal and failure paths and demo/live separation. No order submission is
+needed to complete Milestone A.
 
-**Deliverable:** tested IG demo market-data ingestion behind MRML's provider
-boundary. The verified `POST /session` result is an initial prerequisite,
-not completion of A1-IG or Milestone A.
+**Deliverable:** tested, PostgreSQL-backed IG demo market-data ingestion behind
+MRML's provider boundary. A1-IG is complete; Milestone A remains open until
+A2 and A3 acceptance evidence is established.
 
 ### Milestone B — Position and order lifecycle on IG demo
 
@@ -483,7 +583,9 @@ Scope:
   establish duplicate-submission protection under ambiguous responses.
 - Test rejections, timeouts, partial/uncertain outcomes, retries, restarts,
   and broker-state reconciliation; no blind retry of ambiguous writes.
-- Keep a durable audit trail without logging credentials or session tokens.
+- Use the existing PostgreSQL operational journal for durable requests,
+  responses, fills and reconciliation outcomes, without storing credentials,
+  session tokens, or unredacted sensitive account data.
 
 Acceptance evidence:
 
@@ -611,6 +713,9 @@ Outside initial scope:
 - behavioural aggregation, model training, walk-forward evaluation or
   strategy ranking inside MRML;
 - bulk IG historical backfills that risk consuming broker quotas;
+- specialized time-series databases, external message brokers, or distributed
+  storage infrastructure before the ordinary PostgreSQL implementation is
+  demonstrated;
 - premature optimization, deployment and scheduling before manual proof.
 
 Historical replay, synthetic prefix tests, real MPML runtime tests and the
@@ -622,9 +727,13 @@ substitutes for IG demo platform acceptance tests.
 The former H1-to-D1 parity milestone remains optional compatibility research,
 not a platform gate. Revisit only when explaining recommendation differences
 or supporting a controlled historical benchmark, using the relevant source's
-actual intervals, timestamps, availability and missing-data policy. Do not
-force IG-derived MRML canonical bars to reproduce another broker's historical
-conventions solely for nominal parity.
+actual trading calendar, intervals, timestamps, availability and missing-data
+policy. The existing MRML 24-hour D1 assembly and calendar-consecutive
+`DailyRunner` checks were built for a constrained compatibility workflow; they
+are not evidence that MPML requires weekend bars or that IG must provide one
+bar for every calendar hour. Audit actual MPML D1 and source-broker conventions
+before changing either interface. Do not force IG-derived MRML canonical bars
+to reproduce another broker's historical conventions solely for nominal parity.
 
 ## Original foundation schedule (historical; superseded)
 
