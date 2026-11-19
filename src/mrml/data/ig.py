@@ -86,6 +86,7 @@ class IGObservation:
     high: IGQuote
     low: IGQuote
     close: IGQuote
+    raw_timestamp: str | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -472,11 +473,16 @@ def _quote(item: Any) -> IGQuote:
     return IGQuote(bid, ask)
 
 
-def _observation(row: dict[str, Any]) -> IGObservation:
-    raw = _text(row.get("snapshotTimeUTC"))
+def parse_snapshot_time_utc(raw: str) -> datetime:
+    """Parse the REST UTC field without assigning it an interval meaning."""
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|\+00:00)?", raw):
         raise ValueError("Invalid IG UTC timestamp")
-    timestamp = datetime.fromisoformat(raw).replace(tzinfo=UTC)
+    return datetime.fromisoformat(raw).replace(tzinfo=UTC)
+
+
+def _observation(row: dict[str, Any]) -> IGObservation:
+    raw = _text(row.get("snapshotTimeUTC"))
+    timestamp = parse_snapshot_time_utc(raw)
     opening, high, low, close = (
         _quote(row.get(name))
         for name in ("openPrice", "highPrice", "lowPrice", "closePrice")
@@ -492,7 +498,7 @@ def _observation(row: dict[str, Any]) -> IGObservation:
         <= high.ask
     ):
         raise ValueError("Invalid IG OHLC range")
-    return IGObservation(timestamp, opening, high, low, close)
+    return IGObservation(timestamp, opening, high, low, close, raw_timestamp=raw)
 
 
 def _nonnegative_integer(value: object) -> int:
