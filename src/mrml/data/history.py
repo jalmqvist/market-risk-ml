@@ -94,11 +94,14 @@ def diagnose_history(
 
 @dataclass(frozen=True)
 class EligibilityPolicy:
+    """Control eligibility with independent interval-end and completion checks."""
+
     require_complete: bool
     require_first_availability: bool
     require_session_coverage: bool
     max_age: timedelta | None = None
     minimum_bars: int = 1
+    require_ended_intervals: bool = False
 
     def __post_init__(self) -> None:
         if type(self.minimum_bars) is not int or self.minimum_bars < 1:
@@ -118,6 +121,7 @@ class Refusal(StrEnum):
     INCOMPLETE = "INCOMPLETE"
     UNKNOWN_AVAILABILITY = "UNKNOWN_AVAILABILITY"
     NOT_RETRIEVED_AT_EVALUATION = "NOT_RETRIEVED_AT_EVALUATION"
+    INTERVAL_NOT_ENDED = "INTERVAL_NOT_ENDED"
     STALE = "STALE"
 
 
@@ -176,6 +180,8 @@ def evaluate_history(
         refused.add(Refusal.UNKNOWN_AVAILABILITY)
     if any(bar.retrieved_at > evaluated_at for bar in bars):
         refused.add(Refusal.NOT_RETRIEVED_AT_EVALUATION)
+    if policy.require_ended_intervals and any(bar.end > evaluated_at for bar in bars):
+        refused.add(Refusal.INTERVAL_NOT_ENDED)
     if (
         bars
         and policy.max_age is not None

@@ -326,6 +326,42 @@ def test_eligibility_reports_unknown_and_incomplete() -> None:
     )
 
 
+def test_interval_end_requirement_is_opt_in() -> None:
+    previous, current = bars_at(MONDAY - HOUR, MONDAY)
+    evaluated_at = MONDAY + timedelta(minutes=30)
+    bars = tuple(replace(bar, retrieved_at=evaluated_at) for bar in (previous, current))
+    args = dict(evaluated_at=evaluated_at, validated_mapping=MAPPING)
+
+    assert evaluate_history(bars, policy=PERMISSIVE, **args).eligible
+    policy = replace(PERMISSIVE, require_ended_intervals=True)
+    assert evaluate_history(bars, policy=policy, **args).refusals == (
+        Refusal.INTERVAL_NOT_ENDED,
+    )
+
+
+@pytest.mark.parametrize("elapsed_since_end", [timedelta(0), timedelta(minutes=1)])
+def test_ended_interval_still_requires_completion_evidence(
+    elapsed_since_end: timedelta,
+) -> None:
+    (bar,) = bars_at(MONDAY)
+    bar = replace(bar, retrieved_at=bar.end)
+    args = dict(evaluated_at=bar.end + elapsed_since_end, validated_mapping=MAPPING)
+    policy = replace(PERMISSIVE, require_ended_intervals=True)
+
+    result = evaluate_history((bar,), policy=policy, **args)
+    assert result.eligible
+    assert result.unknown_completion
+    complete_only = replace(policy, require_complete=True)
+    assert evaluate_history((bar,), policy=complete_only, **args).refusals == (
+        Refusal.UNKNOWN_COMPLETION,
+    )
+
+    completed = replace(
+        bar, completion=Completion(CompletionState.COMPLETE, "fixture finalized flag")
+    )
+    assert evaluate_history((completed,), policy=complete_only, **args).eligible
+
+
 def test_freshness_as_of_mapping_and_history_refusals() -> None:
     bars = bars_at(MONDAY)
     policy = replace(PERMISSIVE, max_age=HOUR)
