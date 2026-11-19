@@ -1,6 +1,6 @@
 # MRML Roadmap (v0.6, 2026-11-19)
 
-> **Current status (2026-11-19):** A1-IG is merged and operationally verified within its read-only scope: the IG demo diagnostic completed authentication, account discovery, explicit EUR/USD instrument validation, and retrieval of 32 H1 bid/ask observations. A2 will define canonical market-data semantics; A3 will implement PostgreSQL-backed incremental ingestion. No execution operations were exercised.
+> **Current status (2026-11-19):** A1-IG is merged and operationally verified within its read-only scope: the IG demo diagnostic completed authentication, account discovery, explicit EUR/USD instrument validation, and retrieval of 32 H1 bid/ask observations. A2 defines the offline canonical H1 contract and IG adapter. A3 will implement PostgreSQL-backed incremental ingestion. No execution operations were exercised.
 
 ## Scope baseline and guiding principle (v0)
 
@@ -498,38 +498,12 @@ operational ingestion, and execution remain separate milestones.
 
 **A2-IG — canonical market-data contract:**
 
-- Define the smallest provider-neutral `MarketDataProvider` read interface
-  and immutable canonical FX instrument and H1 source-bar structures. Keep
-  broker-specific IG EPICs distinct from MRML instrument identity, including
-  product variants that must not be silently treated as interchangeable.
-- Preserve bid and ask OHLC components. Derive midpoint data only through an
-  explicit, documented policy; componentwise averaged high/low are not
-  necessarily extrema of an observed midpoint path. Do not infer tick volume.
-- Record source timestamps and their supported interpretation, UTC interval
-  start/end, retrieval time, and known/unknown first-availability evidence.
-  Do not fabricate a source timestamp meaning or availability instant.
-- Distinguish confirmed complete, confirmed incomplete, and **unknown** candle
-  finality. IG historical retrieval success alone is not proof of a completed
-  candle; a clock-based inference is not broker confirmation.
-- Validate malformed, duplicated, unordered, overlapping, stale, or missing
-  observations with explicit outcomes and consumer-supplied eligibility rules.
-  Distinguish **calendar-time continuity**, **trading-session continuity**, and
-  **candle completeness**. Calendar gaps are not automatically data failures.
-- Market-closure classifications require adequate session evidence. Do not
-  treat a Friday-to-Monday gap as a defect merely because calendar hours are
-  absent; equally, do not label any unexplained gap as an expected closure
-  solely by weekday arithmetic. Preserve unknown causes as unknown.
-- Establish stable source identity, interval keys, provenance and revision
-  semantics suitable for later PostgreSQL persistence; use pure, deterministic
-  IG-to-canonical transformations and offline tests. No A2 migrations or
-  historical backfill service.
-- Preserve legacy `H1Bar`, `D1Bar`, `build_d1_bars`, `DailyRunner`, and MPML
-  runtime behavior. The existing strict 24-consecutive-H1 aggregation rule
-  and daily calendar-contiguity checks are **historical MRML scaffold rules**,
-  not universal MRML market-data requirements. Do not automatically bridge
-  new canonical bars into those consumers or force MPML's fixed UTC+1 D1
-  convention onto IG data. Resolve any MPML-specific calendar/aggregation
-  compatibility questions through explicit source audits later.
+The offline contract defines immutable FX and H1 models, an explicit IG product
+mapping, a pure adapter, and sequence and eligibility diagnostics. The
+provider-neutral read protocol describes bounded H1 windows. IG timestamp
+boundary semantics still require source evidence before operational ingestion.
+See [Canonical H1 market data](MARKET_DATA.md) for the schema, policy choices,
+revision keys and A3 prerequisites.
 
 **A3-IG — incremental ingestion and diagnostics:**
 
@@ -553,9 +527,9 @@ operational ingestion, and execution remain separate milestones.
   require live credentials in CI.
 
 **Milestone A acceptance evidence:** A1-IG's credentialed read-only diagnostic
-is complete. A2 must prove deterministic, source-faithful canonical bars and
-explicit eligibility/continuity semantics. A3 must demonstrate bounded
-historical/current ingestion with PostgreSQL persistence, quota-aware requests,
+is complete. A2 has offline coverage for deterministic, source-faithful canonical
+bars and explicit eligibility and continuity semantics. A3 must demonstrate
+bounded historical/current ingestion with PostgreSQL persistence, quota-aware requests,
 idempotency, restart recovery and fresh-status diagnostics. Tests must cover
 normal and failure paths and demo/live separation. No order submission is
 needed to complete Milestone A.
