@@ -1,6 +1,6 @@
 # MRML Roadmap (v0.6, 2026-11-19)
 
-> **Current status (2026-11-19):** A1-IG is merged and operationally verified within its read-only scope: the IG demo diagnostic completed authentication, account discovery, explicit EUR/USD instrument validation, and retrieval of 32 H1 bid/ask observations. A2 defines the offline canonical H1 contract and IG adapter. A3 will implement PostgreSQL-backed incremental ingestion. No execution operations were exercised.
+> **Current status (2026-11-20):** A1-IG is merged and operationally verified within its read-only scope: the IG demo diagnostic completed authentication, account discovery, explicit EUR/USD instrument validation, and retrieval of 32 H1 bid/ask observations. A2 defines the offline canonical H1 contract and IG adapter. A3-S0 audited IG demo H1 timestamp semantics. A3-S1 adds verified PostgreSQL storage for source revisions and canonical H1 interpretations. Incremental ingestion remains open. No execution operations were exercised.
 
 ## Scope baseline and guiding principle (v0)
 
@@ -507,12 +507,17 @@ revision keys and A3 prerequisites.
 
 **A3-IG — incremental ingestion and diagnostics:**
 
-- A3-S0 investigates IG demo H1 timestamps and source semantics before
-  persistence. See the [audit protocol](audit/IG_H1_TIMESTAMP_SEMANTICS.md).
-- Implement PostgreSQL-backed market-data persistence using the repository's
-  SQLAlchemy/Alembic conventions. Keep source observations, canonical data,
-  ingestion checkpoints, and operational journal records logically distinct.
-- Retrieve bounded missing or provisional H1 intervals, rather than repeatedly
+- **A3-S0 complete.** The demo audit documents the empirical H1 start-label
+  evidence and same-label revisions for the audited EPIC. Product-wide
+  semantics, finality, and first availability remain unresolved. See the
+  [audit](audit/IG_H1_TIMESTAMP_SEMANTICS.md).
+- **A3-S1 implemented and verified.** The additive SQLAlchemy/Alembic schema
+  stores revision-aware source observations and versioned H1 interpretations
+  with transactional retries and deterministic as-of reads. Isolated
+  PostgreSQL 16 tests verify migrations, exact numeric and UTC timestamp
+  round trips, concurrency, and reconstruction. See the
+  [storage contract](MARKET_DATA.md#postgresql-persistence).
+- **A3-S2 pending.** Retrieve bounded missing or provisional H1 intervals, rather than repeatedly
   downloading overlapping history. Validate and commit data transactionally;
   advance checkpoints only after successful commits. Make duplicate requests,
   retries and restarts idempotent, with explicit revision handling.
@@ -523,10 +528,9 @@ revision keys and A3 prerequisites.
   freshness, and continuity through concise read-only CLI/status output.
 - Ensure valid market closures do not trigger spurious gap-repair loops;
   unresolved trading-session gaps remain visible and fail closed when relevant.
-- Test deterministic normalization, persistence round-trips, transactional
-  failures, idempotency, recovery, schema migration and refusal of stale or
-  insufficiently supported data. Use offline/isolated database tests; do not
-  require live credentials in CI.
+- Verify recovery and refusal of stale or insufficiently supported data.
+  Establish product-specific quote units before any normalization. Use
+  offline and isolated database tests in CI.
 
 **Milestone A acceptance evidence:** A1-IG's credentialed read-only diagnostic
 is complete. A2 has offline coverage for deterministic, source-faithful canonical

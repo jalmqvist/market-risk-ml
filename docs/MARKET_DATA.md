@@ -75,21 +75,111 @@ and completion values. Legacy `build_d1_bars` can require 24 consecutive hours
 and defaults to a fixed UTC+1 boundary. Canonical H1 carries observed quote
 sides and evidence directly and has no implicit D1 or strategy conversion.
 
-## Persistence keys and A3 prerequisites
+## PostgreSQL persistence
 
-- Identify a source product by provider, source instrument ID, and variant.
-  Version the mapping from that product to the canonical FX instrument.
-- Identify a logical hourly interval by source product, resolution, and UTC
-  start/end. Use the mapping version and transformation and timestamp policy
-  versions when selecting or rebuilding a canonical representation.
-- Identify the source observation stream by source product, source resolution,
-  timestamp field and normalized source label. Preserve original timestamp text,
-  side prices, retrieval time and any evidence on the individual revision.
-  A3 needs a durable retrieval identifier or equivalent idempotency key because
-  repeated revisions can share a source label and may even share a clock
-  timestamp. A later revision can change prices and completion evidence.
-- A3 needs verified IG boundary semantics, product-specific session evidence
-  where available, and explicit rules for rechecking provisional bars. It
-  must implement transactional PostgreSQL storage, idempotent retries and
-  revision selection, bounded quota-aware retrieval, coverage checks,
-  checkpoints and diagnostics.
+A3-S1 uses the existing database engine and Alembic configuration. The
+`MarketDataRepository` accepts that engine. Its metadata is separate from
+the operational journal metadata, and Alembic tracks both.
+
+| Table | Contents and identity |
+| --- | --- |
+| `market_data_products` | Unique provider, exact EPIC and variant. Standard, mini, weekend and forward products have independent identities. |
+| `market_data_mappings` | Immutable mapping from a product and mapping version to an explicitly supplied canonical FX instrument, with an evidence or approval reference. |
+| `market_data_retrievals` | One caller-identified IG response with its product, source resolution, timestamp field, retrieval time, ordered response fingerprint and returned allowance counters if present. |
+| `market_data_observations` | One revision per retrieval ID and zero-based response ordinal. Stores the original timestamp text, parsed UTC label, exact bid/ask OHLC and a content fingerprint independent of the retrieval ID. |
+| `market_data_timestamp_policies` | Named policy scoped to a registered mapping version. Stores the boundary meaning, evidence and explicit approval reference. |
+| `market_data_h1_interpretations` | Links a revision to a policy and transformation version. Stores the UTC interval, interpretation time and completion and availability evidence. The link to the immutable revision supplies the unchanged bid/ask values. |
+
+For each successful bounded response, the caller assigns a durable, globally
+unique retrieval ID such as a UUID and records the UTC time the response was
+received. Replay the same ID, timestamp, ordered observations and allowance
+metadata on a persistence retry. A separate broker request uses a fresh ID
+even if the response's labels and prices match. The observation fingerprint
+covers the original timestamp text, UTC label and decimal price strings. The
+retrieval fingerprint covers those fingerprints in response order. Fingerprints
+check replay content. The database's unique keys and conflict-targeted inserts
+arbitrate concurrent writes. A conflicting reuse of an ID, mapping, policy or
+interpretation raises `PersistenceConflict`. A failed batch rolls back source
+and canonical changes together. Stored allowance metadata consists only of the
+returned remaining, total and reset counters.
+
+Source OHLC prices use PostgreSQL `NUMERIC` without a precision or scale
+modifier. The writer converts the existing IG object's numeric values using
+`Decimal(str(value))`. This preserves integers and the shortest decimal spelling
+that round-trips each previously parsed float. The repository receives parsed
+objects, so the wire number spelling and digits already lost in JSON float
+parsing are outside this contract. Source and canonical revision queries expose
+the exact stored decimals through `SourceRevision`. The reconstructed A2
+`SourceBar` uses its existing Python int/float OHLC contract. SQLite stores the
+decimal strings as text to avoid binary floating-point conversion in its numeric
+affinity rules. Price values retain their source quotation units.
+
+PostgreSQL stores parsed, retrieval, interpretation, interval, and availability
+instants as `timestamptz`. PostgreSQL displays these in the session time zone,
+and the repository normalizes them to UTC when reading. SQLite drops time zone
+information, so the storage type validates UTC on write and restores UTC on
+read. Original IG timestamp text is stored separately with the source
+`snapshotTimeUTC` field name.
+
+### Interpretation and historical reads
+
+Register the exact product mapping with its provenance before using an
+`ApprovedTimestampPolicy` for that mapping. Source-only writes can happen
+before mapping or policy approval. Replay the identical response with its
+retrieval ID to attach an approved interpretation later. Distinct policy names
+or transformation versions preserve distinct interpretations. The A2 adapter
+supplies the implemented H1 transformation. Both start and end policies are
+supported with explicit approval. The A3-S0 audit documents evidence scoped
+to the audited demo product and has no effect on runtime policy selection.
+
+IG source volume stays unknown. Completion and first availability are unknown
+unless the caller supplies supporting evidence through the A2 contract.
+A caller can specify when that interpretation and its evidence became known.
+Otherwise the repository records the current UTC time for a new interpretation
+batch and preserves that time on retries. Supply an earlier interpretation time
+only when records substantiate it.
+
+`source_revisions` returns every revision for the product and resolution with a
+source label in the requested half-open window. `canonical_history` selects one
+stored interpretation per interval start within a half-open window, scoped to
+the exact mapping, policy name, and transformation version. The latest
+eligible retrieval wins. Equal retrieval timestamps are ordered by greatest
+retrieval ID lexicographically, then greatest ordinal. All OHLC components
+come from the selected revision. If supplied, the as-of cutoff is inclusive
+for retrieval time and also for interpretation time in canonical queries.
+Source-only data remains visible in the source query. Without an as-of cutoff,
+queries use the currently stored records.
+
+`StoredHistory` reports whether interpretations exist and carries the
+independent `coverage_verified` flag, which is false in A3-S1.
+`require_observations()` raises `InsufficientHistoryError` for an empty result.
+Even populated history has unverified window coverage. Gaps and empty windows
+carry no market-session classification.
+
+### Migration and tests
+
+Use the existing PostgreSQL 16 Compose service and a configured
+`MRML_DATABASE_URL`. Apply the additive migration using `alembic upgrade head`.
+Revision `0002_market_data` owns only the market-data tables. Downgrading to
+`0001_operational_journal` drops those tables and their stored evidence.
+
+The default `python -m pytest -q` suite exercises offline SQLite behavior.
+Run the isolated PostgreSQL tests with the following command, using a local
+PostgreSQL URL with permission to create a test schema.
+
+```sh
+MRML_TEST_POSTGRES_URL='postgresql+psycopg://USER:PASSWORD@localhost:5432/DATABASE' \
+  python -m pytest -q tests/test_market_data_storage.py -k postgres
+```
+
+The tests create and drop a unique schema per test and exercise Alembic upgrade
+and downgrade, exact numeric values, a non-UTC SQL session, uniqueness,
+concurrent retries and history reconstruction.
+
+### A3-S2 prerequisites
+
+A3-S2 still needs product-specific mapping and timestamp-policy approval,
+quote-unit and session evidence where applicable, a durable retrieval ID
+lifecycle, bounded request windows, quota-aware retries, provisional-bar
+rechecks, recovery checkpoints and explicit window coverage. The storage
+repository performs database operations only.
