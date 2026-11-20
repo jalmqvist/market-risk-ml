@@ -41,21 +41,29 @@ def _required(values: Mapping[str, str | None], name: str) -> str:
     return value
 
 
-def main() -> int:
-    print("MRML / IG DEMO CONNECTIVITY")
-    stage = "Configuration"
+def load_probe_values() -> Mapping[str, str | None]:
+    # Read only the working directory's .env. Exported values take precedence.
     try:
-        # Read only the working directory's .env. Exported values take precedence.
         with Path(".env").open(encoding="utf-8") as stream:
             local_values = dotenv_values(stream=stream, interpolate=False)
     except FileNotFoundError:
         local_values = {}
     except (OSError, UnicodeError):
+        raise ValueError("could not read .env") from None
+    return {**local_values, **os.environ}
+
+
+def main() -> int:
+    print("MRML / IG DEMO CONNECTIVITY")
+    stage = "Configuration"
+    try:
+        values = load_probe_values()
+    except ValueError:
         print("Configuration: FAIL (could not read .env)")
         print("Result: FAIL")
         return 1
     try:
-        config = ProbeConfig.from_environ({**local_values, **os.environ})
+        config = ProbeConfig.from_environ(values)
         print("Environment: demo")
         with IGClient(config.api_key, config.username, config.password) as client:
             stage = "Authentication"

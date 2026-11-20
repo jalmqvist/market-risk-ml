@@ -263,21 +263,8 @@ class IGClient:
 
     def find_market(self, epic: str | None = None) -> IGMarket:
         if epic is not None:
-            validate_epic(epic)
-            payload, _ = self._request(f"/markets/{epic}", 2)
-            try:
-                instrument = _object(payload.get("instrument"))
-                snapshot = _object(payload.get("snapshot"))
-                name = _text(instrument.get("name"))
-                if instrument.get("epic") != epic or not _is_eurusd(
-                    instrument.get("type"), name
-                ):
-                    raise ValueError("Unexpected market")
-                return IGMarket(epic, _optional_text(snapshot.get("marketStatus")))
-            except ValueError:
-                raise IGMarketError(
-                    "IG market details did not validate the configured EUR/USD EPIC"
-                ) from None
+            market, _ = self._eurusd_market_details(epic)
+            return market
 
         payload, _ = self._request(
             "/markets",
@@ -338,21 +325,52 @@ class IGClient:
             )
         return next(iter(matches.values()))
 
+    def _eurusd_market_details(self, epic: str) -> tuple[IGMarket, dict[str, Any]]:
+        validate_epic(epic)
+        payload, _ = self._request(f"/markets/{epic}", 2)
+        try:
+            instrument = _object(payload.get("instrument"))
+            snapshot = _object(payload.get("snapshot"))
+            name = _text(instrument.get("name"))
+            if instrument.get("epic") != epic or not _is_eurusd(
+                instrument.get("type"), name
+            ):
+                raise ValueError("Unexpected market")
+            return IGMarket(
+                epic, _optional_text(snapshot.get("marketStatus"))
+            ), instrument
+        except ValueError:
+            raise IGMarketError(
+                "IG market details did not validate the configured EUR/USD EPIC"
+            ) from None
+
     def get_h1_sample(self, epic: str) -> IGPriceSample:
+        sample = self._get_price_sample(epic, RESOLUTION, SAMPLE_SIZE)
+        if not sample.observations:
+            raise IGMarketError(
+                "IG returned no H1 observations; history is unavailable"
+            )
+        return sample
+
+    def _get_price_sample(
+        self, epic: str, resolution: str, limit: int, *, retry: bool = True
+    ) -> IGPriceSample:
         validate_epic(epic)
         payload, _ = self._request(
             f"/prices/{epic}",
             3,
             params={
-                "resolution": RESOLUTION,
-                "max": SAMPLE_SIZE,
-                "pageSize": SAMPLE_SIZE,
+                "resolution": resolution,
+                "max": limit,
+                "pageSize": limit,
                 "pageNumber": 1,
             },
+            retry=retry,
         )
+        step = timedelta(minutes=1) if resolution == "MINUTE" else timedelta(hours=1)
         try:
             prices = _array(payload.get("prices"))
-            if len(prices) > SAMPLE_SIZE:
+            if len(prices) > limit:
                 raise ValueError("Too many observations")
             metadata = _object(payload.get("metadata", {}))
             paged = _object(metadata.get("pageData", {}))
@@ -367,17 +385,16 @@ class IGClient:
             gaps = 0
             for previous, current in zip(observations, observations[1:], strict=False):
                 interval = current.timestamp - previous.timestamp
-                if interval < timedelta(hours=1) or interval % timedelta(hours=1):
+                if interval < step or interval % step:
                     raise ValueError("Unexpected observation order or spacing")
-                gaps += interval > timedelta(hours=1)
+                gaps += interval > step
             allowance = _allowance(metadata.get("allowance"))
         except (ValueError, OverflowError):
-            raise IGMarketError("IG returned malformed historical H1 data") from None
-        if not observations:
+            label = "H1" if resolution == RESOLUTION else "M1"
             raise IGMarketError(
-                "IG returned no H1 observations; history is unavailable"
-            )
-        return IGPriceSample(epic, RESOLUTION, observations, allowance, gaps)
+                f"IG returned malformed historical {label} data"
+            ) from None
+        return IGPriceSample(epic, resolution, observations, allowance, gaps)
 
     def _request(
         self,
@@ -385,6 +402,7 @@ class IGClient:
         version: int,
         *,
         login: bool = False,
+        retry: bool = True,
         params: dict[str, str | int] | None = None,
     ) -> tuple[dict[str, Any], Response]:
         if not login and not self._tokens:
@@ -441,7 +459,7 @@ class IGClient:
                     "IG login failed or returned malformed data"
                 )
 
-            if status in (429, 502, 503, 504) and not login and attempt == 0:
+            if status in (429, 502, 503, 504) and not login and attempt == 0 and retry:
                 delay = _retry_delay(response.headers.get("Retry-After"))
                 if delay is not None:
                     self._sleep(delay)
