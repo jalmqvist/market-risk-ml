@@ -507,6 +507,8 @@ revision keys and A3 prerequisites.
 
 **A3-IG — incremental ingestion and diagnostics:**
 
+- A3-S0 investigates IG demo H1 timestamps and source semantics before
+  persistence. See the [audit protocol](audit/IG_H1_TIMESTAMP_SEMANTICS.md).
 - Implement PostgreSQL-backed market-data persistence using the repository's
   SQLAlchemy/Alembic conventions. Keep source observations, canonical data,
   ingestion checkpoints, and operational journal records logically distinct.
