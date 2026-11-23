@@ -357,7 +357,7 @@ and preserves existing journal entries. Once the journal contains a revisit,
 downgrade to the earlier constraint is refused to preserve that history.
 With no revisit entries, downgrading to `0002_market_data` removes the
 A3-S2 journal and staged data while retaining A3-S1 committed observations. Verify credentialed range
-behavior and quota consumption in A3-S3 with explicitly bounded demo runs.
+behavior and quota consumption with the [A3-S3 demo runbook](audit/IG_A3_S3_OPERATIONAL_VERIFICATION.md).
 
 ## Future data-source extensions
 

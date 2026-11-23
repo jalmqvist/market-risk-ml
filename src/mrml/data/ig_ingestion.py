@@ -768,6 +768,10 @@ class IGIngestion:
                     change = "observation_missing"
             row.outcome = {
                 "observation_count": len(labels),
+                "observed_source_labels": [
+                    item.raw_timestamp for item in sample.observations
+                ],
+                "pagination": asdict(sample.page) if sample.page is not None else None,
                 "gap_evidence": gaps,
                 "recheck_result": change,
                 "coverage_verified": len(gaps)

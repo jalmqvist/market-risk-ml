@@ -29,6 +29,7 @@ from mrml.data.ig import (
     IGAuthenticationError,
     IGError,
     IGMarketError,
+    IGPricePage,
     IGQuotaError,
     IGSessionError,
 )
@@ -41,6 +42,7 @@ from mrml.data.ig_ingestion import (
 )
 from mrml.data.storage import MarketDataRepository
 from mrml.data.storage_models import IGIngestionAttemptRow, ObservationRow, RetrievalRow
+from mrml.journal.models import Run
 
 Attempt = IGIngestionAttemptRow
 pg_db = test_market_data_storage.pg_db
@@ -281,7 +283,9 @@ def verify_stage_recovery(db, monkeypatch):
 
     monkeypatch.setattr(ingestion.repo, "record_ig_sample", fail_after_inserts)
     with pytest.raises(RuntimeError, match="interrupted"):
-        ingestion.run(lambda *args: sample(), start=START)
+        ingestion.run(
+            lambda *args: replace(sample(), page=IGPricePage(1, 1, 1)), start=START
+        )
     [staged] = rows(db)
     assert staged["state"] == "staged"
     assert staged["retrieval_id"] is None
@@ -297,6 +301,9 @@ def verify_stage_recovery(db, monkeypatch):
     assert committed.id == staged["id"]
     assert committed.retrieval_id == staged["id"]
     assert committed.staged_response is None
+    outcome = restart.status()["last_committed"]["outcome"]
+    assert outcome["observed_source_labels"] == [sample().observations[0].raw_timestamp]
+    assert outcome["pagination"] == {"page_number": 1, "page_size": 1, "total_pages": 1}
     assert restart.recover() is None
     assert restart._commit(staged["id"]).committed_at == committed.committed_at
     assert not history(restart.repo, as_of=RETRIEVED, approval=approval).revisions
@@ -425,6 +432,21 @@ def test_postgres_migration_recovery_and_referential_integrity(pg_db, monkeypatc
     engine, config = pg_db
     command.upgrade(config, "0002_market_data")
     before = set(inspect(engine).get_table_names())
+    with engine.begin() as connection:
+        connection.execute(
+            Run.__table__.insert().values(
+                id="existing-run",
+                run_date=START.date(),
+                mode="demo",
+                config_hash="a" * 64,
+                bundle_hash="b" * 64,
+                code_version="fixture",
+                status="completed",
+                summary={"sentinel": True},
+                created_at=START,
+            )
+        )
+        journal_before = connection.execute(select(Run.__table__)).one()
     command.upgrade(config, "head")
     command.check(config)
     committed = verify_stage_recovery(engine, monkeypatch)
@@ -441,6 +463,7 @@ def test_postgres_migration_recovery_and_referential_integrity(pg_db, monkeypatc
     assert before == set(inspect(engine).get_table_names())
     with engine.connect() as connection:
         assert connection.scalar(select(RetrievalRow.id)) == committed
+        assert connection.execute(select(Run.__table__)).one() == journal_before
 
 
 def test_postgres_concurrent_attempt_and_recovery(pg_db, monkeypatch):
@@ -540,7 +563,7 @@ def test_postgres_cli_demo_and_replacement(pg_db, monkeypatch, capsys):
                 RETRIEVED.replace(microsecond=0),
                 1,
             )
-            return sample()
+            return replace(sample(), page=IGPricePage(1, 1, 1))
 
     def with_test_clock(*args, **kwargs):
         return IGIngestion(*args, clock=clock, **kwargs)
@@ -568,6 +591,16 @@ def test_postgres_cli_demo_and_replacement(pg_db, monkeypatch, capsys):
     assert attempt["state"] == "committed"
     assert attempt["attempt_number"] == 2
     assert attempt["retrieval_id"] != uncertain["id"]
+    assert attempt["outcome"]["observed_source_labels"] == [
+        sample().observations[0].raw_timestamp
+    ]
+    assert attempt["outcome"]["pagination"] == {
+        "page_number": 1,
+        "page_size": 1,
+        "total_pages": 1,
+    }
+    assert main(["status", *identity]) == 0
+    assert json.loads(capsys.readouterr().out)["last_committed"] == attempt
 
 
 @pytest.mark.parametrize("partial", [True, False])

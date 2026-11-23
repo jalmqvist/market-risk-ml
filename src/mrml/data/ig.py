@@ -111,12 +111,20 @@ class IGAllowance:
 
 
 @dataclass(frozen=True)
+class IGPricePage:
+    page_number: int
+    page_size: int
+    total_pages: int
+
+
+@dataclass(frozen=True)
 class IGPriceSample:
     epic: str = field(repr=False)
     resolution: str
     observations: tuple[IGObservation, ...]
     allowance: IGAllowance | None
     gaps: int
+    page: IGPricePage | None = None
 
 
 def validate_epic(value: str) -> None:
@@ -456,18 +464,29 @@ class IGClient:
                 or row.timestamp != row.timestamp.replace(minute=0, second=0)
                 for row in observations
             ):
-                raise ValueError("Unexpected source label")
+                raise IGMarketError(
+                    "IG returned an out-of-window or non-hourly H1 source label"
+                )
             gaps = 0
             for earlier, later in zip(observations, observations[1:], strict=False):
                 if earlier.timestamp >= later.timestamp:
-                    raise ValueError("Unexpected order or duplicate label")
+                    raise IGMarketError(
+                        "IG returned duplicate or disordered H1 source labels"
+                    )
                 gaps += later.timestamp - earlier.timestamp > hour
             allowance = _allowance(metadata.get("allowance"))
         except (ValueError, OverflowError):
             raise IGMarketError(
                 "IG returned malformed or over-budget H1 data"
             ) from None
-        return IGPriceSample(epic, RESOLUTION, observations, allowance, gaps)
+        return IGPriceSample(
+            epic,
+            RESOLUTION,
+            observations,
+            allowance,
+            gaps,
+            IGPricePage(number, size, pages),
+        )
 
     def _get_price_sample(
         self, epic: str, resolution: str, limit: int, *, retry: bool = True

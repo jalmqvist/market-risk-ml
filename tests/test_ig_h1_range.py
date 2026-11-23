@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from test_ig_probe import BAR, EPIC, PRICES, Reply, client_for, login
 
-from mrml.data.ig import DEMO_GATEWAY, IGMarketError, IGQuotaError
+from mrml.data.ig import DEMO_GATEWAY, IGMarketError, IGPricePage, IGQuotaError
 
 START = datetime(2026, 11, 17, 10, tzinfo=UTC)
 END = START + timedelta(hours=2)
@@ -49,6 +49,7 @@ def test_exact_demo_v3_wire_request_and_terminal_edge():
     result = client.get_h1_range(EPIC, START, END, point_limit=3)
     assert tuple(row.timestamp for row in result.observations) == (START, END)
     assert result.allowance.remaining == 998
+    assert result.page == IGPricePage(page_number=1, page_size=3, total_pages=1)
     assert stream.closed
     assert len(session.calls) == 2
     request = session.calls[-1]
@@ -89,7 +90,8 @@ def test_unexpected_labels_and_duplicates_rejected(bad_label):
     payload = response()
     payload["prices"][1] = {**BAR, "snapshotTimeUTC": f"2026-11-17T{bad_label}"}
     client, _ = authenticated(Stream(payload))
-    with pytest.raises(IGMarketError, match="H1"):
+    reason = "duplicate or disordered" if bad_label == "10:00:00" else "out-of-window"
+    with pytest.raises(IGMarketError, match=reason):
         client.get_h1_range(EPIC, START, END, point_limit=3)
 
 
