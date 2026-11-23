@@ -1,6 +1,6 @@
 # IG demo H1 operational verification (A3-S3)
 
-Operational acceptance is pending a reviewed demo capture. Use a dedicated PostgreSQL 16 database provisioned for this exercise and the MRML checkout that contains this runbook. Keep captures outside the repository. Use a shell with tracing disabled, a synchronized clock and a Python environment with `requirements-dev.txt` installed.
+Operational acceptance is pending successful credentialed verification. Two earlier attempts were rejected by strict UTC-label validation. Use a dedicated PostgreSQL 16 database provisioned for this exercise and the MRML checkout that contains this runbook. Keep captures outside the repository. Use a shell with tracing disabled, a synchronized clock and a Python environment with `requirements-dev.txt` installed.
 
 ## Offline preparation
 
@@ -89,30 +89,35 @@ python -m mrml.data.ig_ingest plan "${identity[@]}" "${bounds[@]}" > "$evidence/
 
 Inspect the exit code and attempt. One successful first-page response should produce one committed attempt and a retrieval ID equal to the attempt ID. Record the attempt start (before authentication), response receipt and commit. The attempt timestamp is the available local request-start marker. The wire parameters can be reconstructed from the ingest plan and verified against the offline wire-contract test. REST v3 uses `GET /prices/CS.D.EURUSD.CEE.IP` with `resolution=HOUR`, `from=start` and `to=request_end` formatted as UTC wall-clock strings without offsets or fractional seconds, `pageSize=point_limit`, and `pageNumber=1`. With the example bounds and full plan, `from=2026-11-23T09:00:00` and `to=2026-11-23T12:00:00`. The call has no automatic retries or subsequent page requests. The response's validated pagination and exact `snapshotTimeUTC` labels are in the committed outcome for new attempts recorded with A3-S3.
 
-Compare returned labels to the first, interior and terminal hours. Record missing labels and whether the start and terminal labels appear. Terminal presence supports inclusion for that request. Terminal absence can be ambiguous without independent evidence that the terminal candle existed. A sequence consistent with the UTC range supports the client's interpretation for this case. Broader timezone and boundary claims require stronger evidence. Bounded ingestion rejects duplicates, disordered or out-of-window labels, invalid paging and malformed data before they can become committed coverage. For a range-label refusal, retain the sanitized stderr in `ingest-error.txt`. It includes the first offending parsed source label, UTC bounds, count, validated pagination and validated allowance when available. Allowance reported in this diagnostic is inspection evidence only. The failed attempt keeps its existing classification and no retrieval is created. A malformed timestamp or other generic rejection may supply less detail. Record the refusal and stop for review rather than widening the request or shifting timestamps. [IG prices REST reference](https://labs.ig.com/reference/prices-epic.html)
+Compare returned labels to the first, interior and terminal hours. Record missing labels and whether the start and terminal labels appear. Terminal presence supports inclusion for that request. Terminal absence can be ambiguous without independent evidence that the terminal candle existed. A sequence consistent with the UTC range supports the client's interpretation for this case. Broader timezone and boundary claims require stronger evidence. Bounded ingestion rejects duplicates, disordered or out-of-window labels, invalid paging and malformed data before they can become committed coverage. For a range-label refusal, retain the sanitized stderr in `ingest-error.txt`. It includes the first offending parsed source label, all parsed UTC labels on the bounded page, UTC bounds, count, validated pagination, validated allowance and the numeric login timezone offset when available. Allowance reported in this diagnostic is inspection evidence only. The failed attempt keeps its existing classification and no retrieval is created. A malformed timestamp or other generic rejection may supply less detail. Record the refusal and stop for review rather than widening the request or shifting timestamps. [IG prices REST reference](https://labs.ig.com/reference/prices-epic.html)
 
 Compare `historical_allowance` before and after, recording the last reported total, remaining points, reset time in seconds, reporting time, local available points, requested point limit and actual count. If comparable reports exist, subtract remaining balances and note elapsed time, possible reset and other clients sharing the quota. A fresh database supplies no baseline. Avoid treating the cap, count and debit as interchangeable.
 
-## Follow-up to the first rejected demo response
+## Optional experiment after the second rejected response
 
-Use the reviewed variant `standard` and the dedicated PostgreSQL database. While the original start is within the catch-up horizon, use the same bounds to test comparability. The original attempt used the literal `VERIFIED_VARIANT`, which identifies a separate local product. Leave that attempt in place and do not use its job ID for this command. If the start has aged out, choose one recent elapsed three-hour window during a reviewed session and record the substituted start and planned end.
+Preserve the two failed attempts. Use `standard` and the same demo account. Inspect read-only status for the failed 10:00–13:00 UTC job under this variant. If possible, independently verify the account's named timezone and confirm a nonzero offset for the chosen date. A current numeric login offset can corroborate the observation but does not establish the historical zone. The diagnostic uses the offset reported by the existing login on a range-label rejection.
+
+For the same window, use the standard variant's failed job ID while the window remains inside the catch-up horizon and the single replacement remains eligible. If that window has aged out, use a recent, elapsed active-session window away from a DST transition with `--start UTC_HOUR` in place of `--retry-job "$IG_JOB_ID"`. Keep the three-interval, four-point cap. Run the offline plan first and stop if the plan is refused or would shorten the intended window. Do not override a quota refusal.
 
 ```bash
 identity=(--epic CS.D.EURUSD.CEE.IP --variant standard)
-bounds=(--start 2026-11-23T10:00:00+00:00 --max-intervals 3 --max-points 4)
+python -m mrml.data.ig_ingest status "${identity[@]}"
+# Fill in the job ID from the reviewed failed standard-variant attempt.
+read -rp 'Standard-variant failed job ID: ' IG_JOB_ID
+bounds=(--retry-job "$IG_JOB_ID" --max-intervals 3 --max-points 4)
 umask 077
 evidence=$(mktemp -d)
 python -m mrml.data.ig_ingest plan "${identity[@]}" "${bounds[@]}" > "$evidence/plan.json"
 cat "$evidence/plan.json"
 ```
 
-Confirm the plan is a non-refused request from 10:00 through 13:00 UTC with `point_limit=4` when repeating the original window. If a quota hold or an existing observation changes the plan, stop and review. After the operator has inspected the plan and loaded demo credentials as above, execute this once.
+After review and loading demo credentials, run once. Record the exit code and retain stdout and stderr locally. Then use read-only status. Do not send a second request to resolve ambiguity.
 
 ```bash
-python -m mrml.data.ig_ingest ingest "${identity[@]}" "${bounds[@]}" > "$evidence/ingest.json" 2> "$evidence/ingest-error.txt"
+MRML_IG_ENVIRONMENT=demo MRML_IG_EPIC=CS.D.EURUSD.CEE.IP   python -m mrml.data.ig_ingest ingest "${identity[@]}" "${bounds[@]}"   > "$evidence/ingest.json" 2> "$evidence/ingest-error.txt"
 ```
 
-Retain the output and exit status, then read status without issuing a second broker request. If a label falls outside the range, compare it with the verified account timezone and original UTC wire bounds. A single outlying label can suggest a shift but cannot establish a general timezone or boundary rule.
+Compare the full UTC label list against the two predictions. For the original wire bounds, UTC parsing predicts 10:00 through 13:00 if inclusive, or 10:00 through 12:00 if terminal-exclusive. Account-local parsing at a verified UTC+1 offset predicts 09:00 through 12:00 if inclusive, or 09:00 through 11:00 if terminal-exclusive. Adjust those predictions to the independently verified offset and chosen window. Compare the terminal label only when both endpoint hours are expected to trade. Record mismatches or inconclusive results explicitly. A repeat rejection with the full shifted sequence would support account-local interpretation for the tested window. It would still leave historical DST handling and general endpoint semantics open.
 
 ## Persistence and incremental checks
 

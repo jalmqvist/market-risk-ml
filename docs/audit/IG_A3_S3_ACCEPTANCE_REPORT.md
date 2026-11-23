@@ -1,13 +1,13 @@
 # IG demo H1 A3-S3 acceptance report
 
-**Review state on 2026-11-23** — The first operator-initiated demo request was rejected by the client’s H1 timestamp validation. Follow-up with the revised diagnostic is pending. A3-S0 provides prior credentialed evidence for the exact demo EPIC where noted. Milestone A remains open.
+**Review state on 2026-11-23** — Both operator-initiated demo requests failed strict H1 label validation. The second captured an hourly UTC label one hour before the requested start. A3-S3 and Milestone A remain open pending independently reviewed timezone evidence and a successful credentialed ingestion.
 
 | Area | Status | Evidence | Remaining uncertainty |
 |---|---|---|---|
 | Demo authentication | PASS (operator demo attempt) | The demo authentication step completed and the client reached H1 response validation. | Continued access for a follow-up. |
-| H1 date-range interpretation | FAIL (first demo attempt) | The client rejected an H1 label under its UTC bounds or alignment check. The original diagnostic did not capture the offending label. | Whether IG used a different timezone for the request, returned an out-of-range label for another reason, or returned a non-hourly label. |
-| Boundary inclusion | INCONCLUSIVE (first demo attempt) | Mock transport accepts the terminal hour; CLI records validated pagination and observed labels. Duplicate, disordered and out-of-window responses are refused offline. | First and terminal inclusion for the chosen real window. Absent labels can be ambiguous. |
-| Allowance consumption | PASS (offline); INCONCLUSIVE (first demo attempt) | Reserve, historical exhaustion, throttle holds and local conservative debits tested with synthetic evidence. The first attempt did not capture its response allowance. | Reported allowance and any actual debit from the rejected request. |
+| H1 date-range interpretation | FAIL (both demo attempts) | The second response contained 09:00 UTC for the requested 10:00–13:00 UTC range. | Whether the endpoint interpreted offset-free bounds in the account timezone. |
+| Boundary inclusion | INCONCLUSIVE (demo) | The second response had four observations and included 09:00 UTC. | The other three labels were not captured; a shifted inclusive range is consistent with the count. |
+| Allowance consumption | PASS (offline); OBSERVED (second demo response) | IG reported 9,879 of 10,000 points remaining and 169,890 seconds until reset. Offline reserve and throttle tests passed. | No comparable baseline establishes the debit or concurrent quota usage. |
 | PostgreSQL persistence | PASS (isolated PostgreSQL); NOT RUN (demo) | PostgreSQL 16 migrations and source storage passed with synthetic observations. The operator confirmed that the first demo failure was journaled without committing source observations. | Demo values, metadata and responses with wire precision beyond Python’s numeric parsing. |
 | Restart durability | PASS (isolated PostgreSQL); NOT RUN (demo) | Fresh ingestion/repository instances read committed and recovered retrievals. Fresh CLI status returns the same committed evidence. | Reopen and inspect the real demo retrieval. |
 | Incremental planning | PASS (offline); NOT RUN (demo follow-up) | Tests exercise previously stored labels, overlap, gaps, bounded catch-up and explicit gap revisit. | Rerun the offline planner after a committed demo retrieval. |
@@ -24,9 +24,28 @@ The operator used the demo EPIC `CS.D.EURUSD.CEE.IP`, `resolution=HOUR`, `pageNu
 
 The operator supplied the literal MRML variant `VERIFIED_VARIANT` instead of `standard`. The variant keys local storage and policy scope. The IG client sends the EPIC, resolution, range and paging parameters, so the variant did not affect wire parameters or timestamp validation. Use `standard` for the follow-up and leave the failed attempt in its original journal scope.
 
+## Second credentialed attempt
+
+| Field | Observed value |
+|---|---|
+| Demo EPIC and local variant | `CS.D.EURUSD.CEE.IP`, `standard` |
+| Resolution and requested UTC bounds | `HOUR`, `2026-11-23T10:00:00Z` through `2026-11-23T13:00:00Z` |
+| Wire bounds from the client serializer | `from=2026-11-23T10:00:00`, `to=2026-11-23T13:00:00` |
+| Rejection | `before requested start`; exact `snapshotTimeUTC=2026-11-23T09:00:00` |
+| Observations and pagination | 4; page 1 of 1, page size 4 |
+| Historical allowance | 9,879 remaining of 10,000; 169,890 seconds until reset |
+
+The attempt used the corrected local variant. The H1 client rejected the response before staging valid observations. Preserve both failed journal entries in their respective product scopes. The remaining three labels and session timezone offset were unavailable in this capture.
+
 ## Date-range timezone investigation
 
-The REST v3 prices reference specifies `yyyy-MM-dd'T'HH:mm:ss` for `from` and `to` without identifying their timezone. It distinguishes local `snapshotTime` from `snapshotTimeUTC` in the response. IG's glossary in the market details reference says dates and times are account-relative unless otherwise specified. This makes account-local interpretation plausible, but does not establish the rule for the prices parameters. For example, a hypothetical UTC+1 interpretation would translate the requested 10:00–13:00 clock values to 09:00–12:00 UTC, where a returned 09:00 UTC label would explain a before-start rejection. The actual account timezone and rejected label are unavailable, so neither the direction nor the size of a shift can be inferred. A UTC-hour-aligned label outside the range and an in-range non-hourly label require different investigations. Compare the next diagnostic with the exact wire bounds and an independently verified account timezone. Keep the wire serialization and strict validation unchanged pending evidence. [IG prices REST reference](https://labs.ig.com/reference/prices-epic.html) · [IG market details REST reference](https://labs.ig.com/reference/markets-epic.html)
+- The REST v3 prices reference specifies offset-free `yyyy-MM-dd'T'HH:mm:ss` for `from` and `to`. It separately lists `snapshotTime` as local time and `snapshotTimeUTC` as the UTC source field. IG's glossary says dates and times are relative to the account timezone unless otherwise specified. This supports an account-local hypothesis for the request parameters without documenting endpoint-specific parsing or boundary inclusion. The client preserves the exact UTC source field and parses it as an instant. A3-S0's interval-start inference concerns that field for this product. [IG prices reference](https://labs.ig.com/reference/prices-epic.html) · [IG glossary](https://labs.ig.com/glossary.html)
+- IG documents a numeric `timezoneOffset` in the existing `POST /session` v2 login response and in `GET /session` v1 session details. The references describe hours relative to UTC. They do not document an IANA zone identifier or the offset's effective dates and DST rules. The documented accounts and account-preferences schemas provide no named timezone field. The login offset can corroborate a same-season observation but cannot resolve a historical request's timezone or DST behavior by itself. Check for an explicitly named timezone in the account configuration or obtain written IG confirmation that it applies to this endpoint. [IG session reference](https://labs.ig.com/reference/session.html) · [IG accounts reference](https://labs.ig.com/reference/accounts.html) · [IG account preferences reference](https://labs.ig.com/reference/accounts-preferences.html)
+- If IG interpreted the 10:00 and 13:00 wire values in UTC+1, the corresponding UTC bounds would be 09:00 and 12:00. A continuous inclusive sequence would be 09:00, 10:00, 11:00 and 12:00. A terminal-exclusive sequence would have three labels. The observed 09:00 and count of four fit the inclusive hypothesis, but the complete sequence and the account timezone are unknown. The observed label rules out compliance with MRML's requested UTC bounds for this response. It does not establish the broker's general rule or actual quota debit.
+
+Keep strict UTC validation and current serialization while the timezone convention is unverified. If IG confirms account-local parsing and the exact named zone can be independently established, convert each UTC request endpoint with `zoneinfo.ZoneInfo` at the wire boundary. Preserve the original UTC plan and validation bounds, the exact source timestamp text, and the existing retrieval identities. Never derive a timezone from a login offset. An offset-free wall time can be ambiguous during a fall-back fold. Refuse ambiguous bounds and transition-spanning ranges until IG's handling is established. An instant converted from UTC cannot produce a nonexistent local time. Test that invariant, winter and summer offsets, fold refusal, transition-spanning refusal and both boundary labels before deploying a conversion.
+
+The [runbook](IG_A3_S3_OPERATIONAL_VERIFICATION.md) describes one optional operator-controlled experiment. The diagnostic captures all successfully parsed UTC label strings and any numeric login offset on rejection, without another metadata call or persistence changes. The test suite exercises current UTC serialization and validation across winter, summer and European DST transition dates. Those tests assert invariance to the login offset while the provider convention remains unverified.
 
 ## Test audit
 
@@ -40,9 +59,9 @@ Follow the [operational verification runbook](IG_A3_S3_OPERATIONAL_VERIFICATION.
 
 | Check | Result |
 |---|---|
-| Default offline suite | 379 passed, 14 skipped. The default run excludes opt-in PostgreSQL and external MPML checks. |
+| Default offline suite | 385 passed, 14 skipped. The default run excludes opt-in PostgreSQL and external MPML checks. |
 | Isolated PostgreSQL 16.16 | 7 passed. Alembic upgraded a fresh database to `0004_ig_gap_revisit` and reported no pending schema operations. |
 | Pinned MPML runtime at `ef6b1b84` | 5 passed, 1 expected failure. |
 | Pinned MPML replay at `90d8ea7` | 3 passed, including exact frozen output hashes. |
 | Static checks | Mypy, Ruff lint and format, and `git diff --check` passed. |
-| Credentialed IG demo | First request authenticated and failed H1 label validation. No source observations were committed. Follow-up pending. |
+| Credentialed IG demo | Both requests authenticated and failed H1 label validation. Successful credentialed persistence remains pending. |

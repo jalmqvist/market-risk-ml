@@ -253,6 +253,7 @@ class IGClient:
         self._api_key = api_key
         self._login = {"identifier": username, "password": password}
         self._tokens: dict[str, str] = {}
+        self._login_timezone_offset_hours: int | float | None = None
         self._session = requests.Session() if session is None else session
         self._owns_session = session is None
         if self._owns_session:
@@ -270,6 +271,7 @@ class IGClient:
 
     def authenticate(self) -> None:
         self._tokens.clear()
+        self._login_timezone_offset_hours = None
         payload, response = self._request("/session", 2, login=True)
         headers = CaseInsensitiveDict(response.headers)
         tokens = {name: headers.get(name, "") for name in ("CST", "X-SECURITY-TOKEN")}
@@ -282,6 +284,13 @@ class IGClient:
             if not isinstance(value, str) or not value.strip():
                 raise IGAuthenticationError("IG returned malformed login data")
         self._tokens = tokens
+        offset = payload.get("timezoneOffset")
+        if (
+            isinstance(offset, (int, float))
+            and not isinstance(offset, bool)
+            and -14 <= offset <= 14
+        ):
+            self._login_timezone_offset_hours = offset
 
     def get_accounts(self) -> tuple[IGAccount, ...]:
         payload, _ = self._request("/accounts", 1)
@@ -480,6 +489,10 @@ class IGClient:
                     "requested_start_utc": start.isoformat(),
                     "requested_end_utc": end.isoformat(),
                     "observation_count": len(observations),
+                    "returned_snapshot_times_utc": [
+                        item.raw_timestamp for item in observations
+                    ],
+                    "login_timezone_offset_hours": self._login_timezone_offset_hours,
                     "pagination": asdict(pagination),
                     "allowance": asdict(allowance) if allowance is not None else None,
                 }

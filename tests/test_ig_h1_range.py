@@ -117,6 +117,8 @@ def test_rejected_range_label_has_sanitized_evidence(
         "requested_start_utc": START.isoformat(),
         "requested_end_utc": END.isoformat(),
         "observation_count": 2,
+        "returned_snapshot_times_utc": [BAR["snapshotTimeUTC"], bad_label],
+        "login_timezone_offset_hours": None,
         "pagination": {"page_number": 1, "page_size": 3, "total_pages": 1},
         "allowance": None
         if invalid_allowance
@@ -125,6 +127,82 @@ def test_rejected_range_label_has_sanitized_evidence(
             "total": allowance["totalAllowance"],
             "reset_seconds": allowance["allowanceExpiry"],
         },
+    }
+    assert len(session.calls) == 2
+
+
+@pytest.mark.parametrize(
+    ("day", "offset"),
+    [
+        ("2026-01-19", 1),
+        ("2026-07-20", 2),
+        ("2026-03-29", 2),
+        ("2026-10-25", 1),
+    ],
+)
+def test_utc_wire_and_inclusive_validation_edges_ignore_session_offset(day, offset):
+    start = datetime.fromisoformat(f"{day}T00:00:00+00:00")
+    end = start + timedelta(hours=3)
+    labels = [f"{day}T{hour:02d}:00:00" for hour in range(4)]
+    payload = response()
+    payload["prices"] = [{**BAR, "snapshotTimeUTC": label} for label in labels]
+    payload["metadata"]["size"] = 4
+    payload["metadata"]["pageData"]["pageSize"] = 4
+    session_reply = login()
+    session_reply.payload = {**session_reply.payload, "timezoneOffset": offset}
+    client, session = client_for(session_reply, Stream(payload))
+    client.authenticate()
+
+    result = client.get_h1_range(EPIC, start, end, point_limit=4)
+
+    assert [item.raw_timestamp for item in result.observations] == labels
+    assert [item.timestamp for item in result.observations] == [
+        start + timedelta(hours=hour) for hour in range(4)
+    ]
+    assert session.calls[-1]["params"]["from"] == labels[0]
+    assert session.calls[-1]["params"]["to"] == labels[-1]
+
+
+@pytest.mark.parametrize(("offset", "safe_offset"), [(1, 1), ("private", None)])
+def test_observed_november_range_stays_rejected(offset, safe_offset):
+    start = datetime(2026, 11, 23, 10, tzinfo=UTC)
+    end = start + timedelta(hours=3)
+    # Only 09:00 was captured by the operator. The remaining labels model
+    # the account-local inclusive hypothesis.
+    labels = [f"2026-11-23T{hour:02d}:00:00" for hour in range(9, 13)]
+    payload = response()
+    payload["prices"] = [{**BAR, "snapshotTimeUTC": label} for label in labels]
+    payload["metadata"].update(
+        size=4,
+        pageData={"pageNumber": 1, "pageSize": 4, "totalPages": 1},
+        allowance={
+            "remainingAllowance": 9879,
+            "totalAllowance": 10000,
+            "allowanceExpiry": 169890,
+        },
+    )
+    session_reply = login()
+    session_reply.payload = {**session_reply.payload, "timezoneOffset": offset}
+    client, session = client_for(session_reply, Stream(payload))
+    client.authenticate()
+
+    with pytest.raises(IGMarketError, match="before requested start") as caught:
+        client.get_h1_range(EPIC, start, end, point_limit=4)
+
+    diagnostic = json.loads(str(caught.value).split("; ", 1)[1])
+    assert diagnostic["snapshotTimeUTC"] == labels[0]
+    assert diagnostic["returned_snapshot_times_utc"] == labels
+    assert diagnostic["login_timezone_offset_hours"] == safe_offset
+    assert diagnostic["observation_count"] == 4
+    assert diagnostic["pagination"] == {
+        "page_number": 1,
+        "page_size": 4,
+        "total_pages": 1,
+    }
+    assert diagnostic["allowance"] == {
+        "remaining": 9879,
+        "total": 10000,
+        "reset_seconds": 169890,
     }
     assert len(session.calls) == 2
 
