@@ -1,6 +1,6 @@
 # IG demo H1 operational verification (A3-S3)
 
-Operational acceptance is pending successful credentialed verification. Two earlier attempts were rejected by strict UTC-label validation. Use a dedicated PostgreSQL 16 database provisioned for this exercise and the MRML checkout that contains this runbook. Keep captures outside the repository. Use a shell with tracing disabled, a synchronized clock and a Python environment with `requirements-dev.txt` installed.
+Operational acceptance is pending successful credentialed verification. Three earlier attempts were rejected by strict UTC-label validation. Use a dedicated PostgreSQL 16 database provisioned for this exercise and the MRML checkout that contains this runbook. Keep captures outside the repository. Use a shell with tracing disabled, a synchronized clock and a Python environment with `requirements-dev.txt` installed.
 
 ## Offline preparation
 
@@ -53,21 +53,24 @@ PY
 
 Review the exact demo EPIC's product variant against retained market metadata or an independently reviewed IG product specification. Record the reference, date, instrument type, expiry and account product type without identifying the account. The EPIC, currency category and expiry marker alone are insufficient. Stop before the credentialed price request if you cannot establish the variant. If necessary, review the demo platform’s market information for the exact EPIC alongside its matching product specification. The existing client’s `find_market(epic)` can confirm the configured EUR/USD EPIC and current status. Retain only selected instrument fields. Avoid running either of the historical sample probes for this preflight.
 
-Start in source-only mode. Use a new product history in the dedicated database. Pick an explicit UTC hour during a reviewed liquid weekday session that lies at least four hours in the past and inside the default 48-hour catch-up horizon. Choose a window for which the first and terminal hours both have elapsed. Replace the example below with the chosen date and time. With three intervals and an unoccupied terminal label, expect `request_end` exactly three hours after `start` and `point_limit` equal to 4.
+For the next request, use the reviewed `standard` variant and source-only mode. Preserve the historical attempts. The standard variant's replacement has already been used. Select a fresh, unattempted window with no overlap with the earlier 10:00–13:00 UTC range. Do not pass `--retry-job` for this verification. Pick an explicit UTC hour during a reviewed liquid weekday session that lies at least four hours in the past and inside the default 48-hour catch-up horizon. Choose a window for which the first and terminal hours both have elapsed. Replace the example below if the window is no longer eligible. Obtain account-specific evidence for the named IANA timezone from the reviewed account configuration or IG confirmation and an explicit approval reference for this demo account. A numeric login offset alone cannot establish the zone. The approval reference should omit credentials and account identifiers. Supply both flags. The CLI checks that a valid IANA name and a nonblank reference are provided. The operator is responsible for verifying the reference. With three intervals and an unoccupied terminal label, expect `request_end` exactly three hours after `start` and `point_limit` equal to 4.
 
 ```bash
 export MRML_IG_EPIC='CS.D.EURUSD.CEE.IP'
-export IG_VARIANT='REPLACE_WITH_REVIEWED_PRODUCT_VARIANT'
-export IG_START='2026-11-23T09:00:00+00:00'
+export IG_VARIANT=standard
+export IG_START='2026-11-23T06:00:00+00:00'
+read -rp 'Approved IG account IANA timezone: ' IG_REQUEST_ZONE
+read -rp 'Approved IG timezone evidence reference: ' IG_REQUEST_APPROVAL
+request_zone=(--request-timezone "$IG_REQUEST_ZONE" --request-timezone-approval "$IG_REQUEST_APPROVAL")
 identity=(--epic "$MRML_IG_EPIC" --variant "$IG_VARIANT")
 bounds=(--start "$IG_START" --max-intervals 3 --max-points 4)
 evidence=$(mktemp -d)
 python -m mrml.data.ig_ingest status "${identity[@]}" > "$evidence/before.json"
-python -m mrml.data.ig_ingest plan "${identity[@]}" "${bounds[@]}" > "$evidence/plan.json"
+python -m mrml.data.ig_ingest plan "${identity[@]}" "${bounds[@]}" "${request_zone[@]}" > "$evidence/plan.json"
 cat "$evidence/plan.json"
 ```
 
-Review the status and plan before proceeding. Require a non-refused incremental request for the selected range and the expected point budget. The planner computes the end and may shorten it around an existing label or the current time. An exact on-the-hour wire end is necessary for a boundary test. If the stored allowance is unknown in the isolated database, record it as unknown. Keep the default 20-point reserve. The planner does not reserve quota at review time, so compare the ingest plan to the recorded offline plan and flag discrepancies.
+Review the status and plan before proceeding. Require a non-refused incremental request for the selected range and the expected point budget. Check the plan’s `wire_bounds` against the approved zone and the requested date. A missing approval or DST refusal must be resolved before any request. The planner computes the end and may shorten it around an existing label or the current time. Use an exact UTC-hour end for the terminal-label test. If the stored allowance is unknown in the isolated database, record it as unknown. Keep the default 20-point reserve. The planner does not reserve quota at review time, so compare the ingest plan to the recorded offline plan and flag discrepancies.
 
 ## One operator-initiated demo request
 
@@ -79,52 +82,26 @@ read -rsp 'IG demo API key: ' MRML_IG_API_KEY; echo
 read -rsp 'IG demo username: ' MRML_IG_USERNAME; echo
 read -rsp 'IG demo password: ' MRML_IG_PASSWORD; echo
 export MRML_IG_API_KEY MRML_IG_USERNAME MRML_IG_PASSWORD
-python -m mrml.data.ig_ingest ingest "${identity[@]}" "${bounds[@]}" > "$evidence/ingest.json" 2> "$evidence/ingest-error.txt"
+python -m mrml.data.ig_ingest ingest "${identity[@]}" "${bounds[@]}" "${request_zone[@]}" > "$evidence/ingest.json" 2> "$evidence/ingest-error.txt"
 ingest_rc=$?
 unset MRML_IG_API_KEY MRML_IG_USERNAME MRML_IG_PASSWORD
 printf 'Ingest exit code %s\n' "$ingest_rc"
 python -m mrml.data.ig_ingest status "${identity[@]}" > "$evidence/after.json"
-python -m mrml.data.ig_ingest plan "${identity[@]}" "${bounds[@]}" > "$evidence/next-plan.json"
+python -m mrml.data.ig_ingest plan "${identity[@]}" "${bounds[@]}" "${request_zone[@]}" > "$evidence/next-plan.json"
 ```
 
-Inspect the exit code and attempt. One successful first-page response should produce one committed attempt and a retrieval ID equal to the attempt ID. Record the attempt start (before authentication), response receipt and commit. The attempt timestamp is the available local request-start marker. The wire parameters can be reconstructed from the ingest plan and verified against the offline wire-contract test. REST v3 uses `GET /prices/CS.D.EURUSD.CEE.IP` with `resolution=HOUR`, `from=start` and `to=request_end` formatted as UTC wall-clock strings without offsets or fractional seconds, `pageSize=point_limit`, and `pageNumber=1`. With the example bounds and full plan, `from=2026-11-23T09:00:00` and `to=2026-11-23T12:00:00`. The call has no automatic retries or subsequent page requests. The response's validated pagination and exact `snapshotTimeUTC` labels are in the committed outcome for new attempts recorded with A3-S3.
+Inspect the exit code and attempt. One successful first-page response should produce one committed attempt and a retrieval ID equal to the attempt ID. Record the attempt start (before authentication), response receipt and commit. The attempt timestamp is the available local request-start marker. Record `wire_bounds` from the plan and ingestion output. REST v3 uses `GET /prices/CS.D.EURUSD.CEE.IP` with `resolution=HOUR`, account-zone `from` and `to` strings without offsets, `pageSize=point_limit`, and `pageNumber=1`. Returned `snapshotTimeUTC` labels are checked against the original UTC bounds. The call has no automatic retries or subsequent page requests. The response's validated pagination and exact `snapshotTimeUTC` labels are in the committed outcome for new attempts recorded with A3-S3.
 
 Compare returned labels to the first, interior and terminal hours. Record missing labels and whether the start and terminal labels appear. Terminal presence supports inclusion for that request. Terminal absence can be ambiguous without independent evidence that the terminal candle existed. A sequence consistent with the UTC range supports the client's interpretation for this case. Broader timezone and boundary claims require stronger evidence. Bounded ingestion rejects duplicates, disordered or out-of-window labels, invalid paging and malformed data before they can become committed coverage. For a range-label refusal, retain the sanitized stderr in `ingest-error.txt`. It includes the first offending parsed source label, all parsed UTC labels on the bounded page, UTC bounds, count, validated pagination, validated allowance and the numeric login timezone offset when available. Allowance reported in this diagnostic is inspection evidence only. The failed attempt keeps its existing classification and no retrieval is created. A malformed timestamp or other generic rejection may supply less detail. Record the refusal and stop for review rather than widening the request or shifting timestamps. [IG prices REST reference](https://labs.ig.com/reference/prices-epic.html)
 
 Compare `historical_allowance` before and after, recording the last reported total, remaining points, reset time in seconds, reporting time, local available points, requested point limit and actual count. If comparable reports exist, subtract remaining balances and note elapsed time, possible reset and other clients sharing the quota. A fresh database supplies no baseline. Avoid treating the cap, count and debit as interchangeable.
 
-## Optional experiment after the second rejected response
-
-Preserve the two failed attempts. Use `standard` and the same demo account. Inspect read-only status for the failed 10:00–13:00 UTC job under this variant. If possible, independently verify the account's named timezone and confirm a nonzero offset for the chosen date. A current numeric login offset can corroborate the observation but does not establish the historical zone. The diagnostic uses the offset reported by the existing login on a range-label rejection.
-
-For the same window, use the standard variant's failed job ID while the window remains inside the catch-up horizon and the single replacement remains eligible. If that window has aged out, use a recent, elapsed active-session window away from a DST transition with `--start UTC_HOUR` in place of `--retry-job "$IG_JOB_ID"`. Keep the three-interval, four-point cap. Run the offline plan first and stop if the plan is refused or would shorten the intended window. Do not override a quota refusal.
-
-```bash
-identity=(--epic CS.D.EURUSD.CEE.IP --variant standard)
-python -m mrml.data.ig_ingest status "${identity[@]}"
-# Fill in the job ID from the reviewed failed standard-variant attempt.
-read -rp 'Standard-variant failed job ID: ' IG_JOB_ID
-bounds=(--retry-job "$IG_JOB_ID" --max-intervals 3 --max-points 4)
-umask 077
-evidence=$(mktemp -d)
-python -m mrml.data.ig_ingest plan "${identity[@]}" "${bounds[@]}" > "$evidence/plan.json"
-cat "$evidence/plan.json"
-```
-
-After review and loading demo credentials, run once. Record the exit code and retain stdout and stderr locally. Then use read-only status. Do not send a second request to resolve ambiguity.
-
-```bash
-MRML_IG_ENVIRONMENT=demo MRML_IG_EPIC=CS.D.EURUSD.CEE.IP   python -m mrml.data.ig_ingest ingest "${identity[@]}" "${bounds[@]}"   > "$evidence/ingest.json" 2> "$evidence/ingest-error.txt"
-```
-
-Compare the full UTC label list against the two predictions. For the original wire bounds, UTC parsing predicts 10:00 through 13:00 if inclusive, or 10:00 through 12:00 if terminal-exclusive. Account-local parsing at a verified UTC+1 offset predicts 09:00 through 12:00 if inclusive, or 09:00 through 11:00 if terminal-exclusive. Adjust those predictions to the independently verified offset and chosen window. Compare the terminal label only when both endpoint hours are expected to trade. Record mismatches or inconclusive results explicitly. A repeat rejection with the full shifted sequence would support account-local interpretation for the tested window. It would still leave historical DST handling and general endpoint semantics open.
-
 ## Persistence and incremental checks
 
-Use each command in a new process. The post-ingestion `status` invocation reopens PostgreSQL. Inspect the exact stored bid/ask OHLC tuples as decimals through the repository API. Set `IG_END` to the next UTC hour after the plan's `request_end` so the half-open read includes a possible terminal observation. Use the committed retrieval ID from the status when checking the initial response. The read also shows both revisions if a later recheck occurred.
+Run the repository read below as a baseline before ingestion and again after it. Use each invocation in a new process. The post-ingestion `status` invocation reopens PostgreSQL. Inspect the exact stored bid/ask OHLC tuples as decimals through the repository API. Set `IG_END` to the next UTC hour after the plan's `request_end` so the half-open read includes a possible terminal observation. Use the committed retrieval ID from the status when checking the initial response. The read also shows both revisions if a later recheck occurred.
 
 ```bash
-export IG_END='2026-11-23T13:00:00+00:00'
+export IG_END='2026-11-23T10:00:00+00:00'
 python - <<'PY'
 import os
 from datetime import datetime
@@ -147,7 +124,7 @@ engine.dispose()
 PY
 ```
 
-In a fresh isolated database, expect counts of one attempt, one retrieval, the outcome's observation count, and zero interpretations. A successful empty response can persist a retrieval with no source revisions. Compare source labels and retrieval time to the outcome. Keep bid/ask values local. The bounded client decodes JSON numbers using Python's numeric parser before storage converts the parsed values to exact database decimals. This check establishes persistence of the parsed source values in source units. Broker wire precision beyond the parsed values remains unverified.
+Compare counts against the pre-ingest baseline and cross-check the new retrieval ID. Expect one additional attempt, one additional retrieval, the outcome's observation count in new source rows, and zero new interpretations. In a reused dedicated database, verify the earlier failed attempts still exist with their original identities. A successful empty response can persist a retrieval with no source revisions. Operational acceptance requires inspecting actual stored source observations. For the full inclusive example, look for 06:00, 07:00, 08:00 and 09:00 UTC. Compare source labels and retrieval time to the outcome. Keep bid/ask values local. The bounded client decodes JSON numbers using Python's numeric parser before storage converts the parsed values to exact database decimals. This check establishes persistence of the parsed source values in source units. Broker wire precision beyond the parsed values remains unverified.
 
 Compare the second plan to the first and check that its window avoids stored observations, including a returned terminal label. A newer bounded segment can be eligible if the initial segment left more recent hours. Missing historical labels remain `UNKNOWN` without exact session evidence, and an already attempted missing label is held for explicit review. Check that the verified contiguous checkpoint is unset and that broker candle finality reads `unknown`. Rerun the persistence read and journal comparison to check for changes. Planning and status require no IG access.
 
@@ -186,7 +163,7 @@ engine.dispose()
 PY
 canonical=(--mapping-version "$IG_MAPPING" --timestamp-policy "$IG_POLICY")
 python -m mrml.data.ig_ingest status "${identity[@]}" "${canonical[@]}"
-python -m mrml.data.ig_ingest plan "${identity[@]}" "${bounds[@]}" "${canonical[@]}"
+python -m mrml.data.ig_ingest plan "${identity[@]}" "${bounds[@]}" "${request_zone[@]}" "${canonical[@]}"
 ```
 
 Registration does not retroactively interpret a source-only retrieval. The isolated recovery tests exercise approved canonical persistence with synthetic input. If real canonical verification is still needed, review a distinct bounded window and plan before explicitly invoking the same demo ingest command with `"${canonical[@]}"` appended. Reacquire credentials through the hidden prompts. Use the matching start and end for this window. Verify the canonical result through the repository API.
@@ -227,13 +204,13 @@ PY
 A recheck requires an approved-policy observation retrieved during its inferred interval and due after its end. If status lists one and reviewing revisions would add distinct evidence, run the plan below. Confirm it names the desired hour, requests one point and respects quota. Optionally execute one explicit demo ingest after loading credentials again. Compare both retrieval IDs and OHLC tuples through the source reader and record `changed`, `unchanged` or `observation_missing` from the outcome. Candle finality remains unknown in all three cases.
 
 ```bash
-python -m mrml.data.ig_ingest plan "${identity[@]}" "${canonical[@]}" --recheck --max-points 1
-python -m mrml.data.ig_ingest ingest "${identity[@]}" "${canonical[@]}" --recheck --max-points 1
+python -m mrml.data.ig_ingest plan "${identity[@]}" "${canonical[@]}" "${request_zone[@]}" --recheck --max-points 1
+python -m mrml.data.ig_ingest ingest "${identity[@]}" "${canonical[@]}" "${request_zone[@]}" --recheck --max-points 1
 ```
 
 ## Recovery and refusals
 
-Read status before taking any recovery action. For a staged response, run `python -m mrml.data.ig_ingest recover "${identity[@]}"`. This uses the stored response and policy association without contacting IG. Check that recovery commits under the original attempt/retrieval ID and that invoking recover again does nothing. An uncertain or failed pre-staging attempt may have spent quota. Record its job ID and examine quota holds and current coverage. Only if a replacement is independently authorized, inspect `plan "${identity[@]}" --retry-job JOB_ID --max-intervals 3 --max-points 4` with the original policy options, then invoke `ingest` with the same options if the plan permits it. Use `python -m mrml.data.ig_ingest` for both commands. A replacement is a new attempt with a new retrieval identity. This procedure allows uncertain broker outcomes across process failures.
+Read status before taking any recovery action. For a staged response, run `python -m mrml.data.ig_ingest recover "${identity[@]}"`. This uses the stored response and policy association without contacting IG. Check that recovery commits under the original attempt/retrieval ID and that invoking recover again does nothing. An uncertain or failed pre-staging attempt may have spent quota. Record its job ID and examine quota holds and current coverage. Only if a replacement is independently authorized, inspect `plan "${identity[@]}" "${request_zone[@]}" --retry-job JOB_ID --max-intervals 3 --max-points 4` with the original policy options, then invoke `ingest` with the same options if the plan permits it. Use `python -m mrml.data.ig_ingest` for both commands. A replacement is a new attempt with a new retrieval identity. This procedure allows uncertain broker outcomes across process failures.
 
 Stop on demo configuration mismatch, missing approval for canonical options, malformed response, reserve breach, historical exhaustion, throttle hold or a refused window. Inspect status and the retry time. Do not override allowance or provoke a live interruption. Verify rollback, staging, restart, replacement and historical as-of behavior offline using the existing fixtures.
 

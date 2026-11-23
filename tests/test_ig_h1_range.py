@@ -7,10 +7,18 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from test_ig_probe import BAR, EPIC, PRICES, Reply, client_for, login
 
-from mrml.data.ig import DEMO_GATEWAY, IGMarketError, IGPricePage, IGQuotaError
+from mrml.data.ig import (
+    DEMO_GATEWAY,
+    IGError,
+    IGMarketError,
+    IGPricePage,
+    IGQuotaError,
+    IGRequestTimezone,
+)
 
 START = datetime(2026, 11, 17, 10, tzinfo=UTC)
 END = START + timedelta(hours=2)
+UTC_REQUEST = IGRequestTimezone("Etc/UTC", "Synthetic UTC approval")
 
 
 class Stream(Reply):
@@ -46,7 +54,9 @@ def response():
 def test_exact_demo_v3_wire_request_and_terminal_edge():
     stream = Stream(response())
     client, session = authenticated(stream)
-    result = client.get_h1_range(EPIC, START, END, point_limit=3)
+    result = client.get_h1_range(
+        EPIC, START, END, point_limit=3, request_timezone=UTC_REQUEST
+    )
     assert tuple(row.timestamp for row in result.observations) == (START, END)
     assert result.allowance.remaining == 998
     assert result.page == IGPricePage(page_number=1, page_size=3, total_pages=1)
@@ -81,7 +91,9 @@ def test_malformed_or_partial_pagination_refused(patch):
     payload["metadata"]["pageData"].update(patch)
     client, session = authenticated(Stream(payload))
     with pytest.raises(IGMarketError, match="over-budget"):
-        client.get_h1_range(EPIC, START, END, point_limit=3)
+        client.get_h1_range(
+            EPIC, START, END, point_limit=3, request_timezone=UTC_REQUEST
+        )
     assert len(session.calls) == 2
 
 
@@ -108,7 +120,9 @@ def test_rejected_range_label_has_sanitized_evidence(
     client, session = authenticated(Stream(payload))
 
     with pytest.raises(IGMarketError, match=reason) as caught:
-        client.get_h1_range(EPIC, START, END, point_limit=3)
+        client.get_h1_range(
+            EPIC, START, END, point_limit=3, request_timezone=UTC_REQUEST
+        )
 
     message = str(caught.value)
     assert "private" not in message and "openPrice" not in message
@@ -116,6 +130,8 @@ def test_rejected_range_label_has_sanitized_evidence(
         "snapshotTimeUTC": bad_label,
         "requested_start_utc": START.isoformat(),
         "requested_end_utc": END.isoformat(),
+        "wire_from": START.isoformat(timespec="seconds")[:-6],
+        "wire_to": END.isoformat(timespec="seconds")[:-6],
         "observation_count": 2,
         "returned_snapshot_times_utc": [BAR["snapshotTimeUTC"], bad_label],
         "login_timezone_offset_hours": None,
@@ -132,15 +148,15 @@ def test_rejected_range_label_has_sanitized_evidence(
 
 
 @pytest.mark.parametrize(
-    ("day", "offset"),
+    ("day", "wire_start", "wire_end"),
     [
-        ("2026-01-19", 1),
-        ("2026-07-20", 2),
-        ("2026-03-29", 2),
-        ("2026-10-25", 1),
+        ("2026-01-19", "01:00:00", "04:00:00"),
+        ("2026-07-20", "02:00:00", "05:00:00"),
     ],
 )
-def test_utc_wire_and_inclusive_validation_edges_ignore_session_offset(day, offset):
+def test_approved_timezone_converts_wire_and_preserves_inclusive_utc_labels(
+    day, wire_start, wire_end
+):
     start = datetime.fromisoformat(f"{day}T00:00:00+00:00")
     end = start + timedelta(hours=3)
     labels = [f"{day}T{hour:02d}:00:00" for hour in range(4)]
@@ -149,26 +165,67 @@ def test_utc_wire_and_inclusive_validation_edges_ignore_session_offset(day, offs
     payload["metadata"]["size"] = 4
     payload["metadata"]["pageData"]["pageSize"] = 4
     session_reply = login()
-    session_reply.payload = {**session_reply.payload, "timezoneOffset": offset}
+    session_reply.payload = {**session_reply.payload, "timezoneOffset": -5}
     client, session = client_for(session_reply, Stream(payload))
     client.authenticate()
+    zone = IGRequestTimezone("Europe/Stockholm", "Synthetic account approval")
 
-    result = client.get_h1_range(EPIC, start, end, point_limit=4)
+    result = client.get_h1_range(EPIC, start, end, point_limit=4, request_timezone=zone)
 
     assert [item.raw_timestamp for item in result.observations] == labels
     assert [item.timestamp for item in result.observations] == [
         start + timedelta(hours=hour) for hour in range(4)
     ]
-    assert session.calls[-1]["params"]["from"] == labels[0]
-    assert session.calls[-1]["params"]["to"] == labels[-1]
+    assert session.calls[-1]["params"]["from"] == f"{day}T{wire_start}"
+    assert session.calls[-1]["params"]["to"] == f"{day}T{wire_end}"
+
+
+@pytest.mark.parametrize(
+    ("first", "last", "reason"),
+    [
+        ("2026-03-29T00:00:00", "2026-03-29T01:00:00", "offset transition"),
+        ("2026-10-25T00:00:00", "2026-10-25T03:00:00", "ambiguous"),
+        ("2026-10-25T01:00:00", "2026-10-25T03:00:00", "ambiguous"),
+        ("2026-10-24T23:00:00", "2026-10-25T03:00:00", "offset transition"),
+    ],
+)
+def test_dst_bounds_refused_before_price_request(first, last, reason):
+    start, end = (datetime.fromisoformat(value + "+00:00") for value in (first, last))
+    zone = IGRequestTimezone("Europe/Stockholm", "Synthetic account approval")
+    client, session = authenticated(Stream(response()))
+    with pytest.raises(IGError, match=reason):
+        client.get_h1_range(EPIC, start, end, point_limit=5, request_timezone=zone)
+    assert len(session.calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "approval", "reason"),
+    [
+        ("Europe/Stockholm", " ", "approval evidence"),
+        ("localtime", "fixture", "IANA timezone"),
+        ("+01:00", "fixture", "IANA timezone"),
+    ],
+)
+def test_invalid_timezone_configuration_refused(name, approval, reason):
+    with pytest.raises(IGError, match=reason):
+        IGRequestTimezone(name, approval)
+
+
+def test_range_refuses_missing_approval_even_when_login_supplies_offset():
+    session_reply = login()
+    session_reply.payload = {**session_reply.payload, "timezoneOffset": 1}
+    client, session = client_for(session_reply, Stream(response()))
+    client.authenticate()
+    with pytest.raises(IGError, match="approved IANA timezone"):
+        client.get_h1_range(EPIC, START, END, point_limit=3)
+    assert len(session.calls) == 1
 
 
 @pytest.mark.parametrize(("offset", "safe_offset"), [(1, 1), ("private", None)])
 def test_observed_november_range_stays_rejected(offset, safe_offset):
     start = datetime(2026, 11, 23, 10, tzinfo=UTC)
     end = start + timedelta(hours=3)
-    # Only 09:00 was captured by the operator. The remaining labels model
-    # the account-local inclusive hypothesis.
+    # Replay the observed shifted labels to confirm UTC validation stays strict.
     labels = [f"2026-11-23T{hour:02d}:00:00" for hour in range(9, 13)]
     payload = response()
     payload["prices"] = [{**BAR, "snapshotTimeUTC": label} for label in labels]
@@ -176,7 +233,7 @@ def test_observed_november_range_stays_rejected(offset, safe_offset):
         size=4,
         pageData={"pageNumber": 1, "pageSize": 4, "totalPages": 1},
         allowance={
-            "remainingAllowance": 9879,
+            "remainingAllowance": 9875,
             "totalAllowance": 10000,
             "allowanceExpiry": 169890,
         },
@@ -187,7 +244,9 @@ def test_observed_november_range_stays_rejected(offset, safe_offset):
     client.authenticate()
 
     with pytest.raises(IGMarketError, match="before requested start") as caught:
-        client.get_h1_range(EPIC, start, end, point_limit=4)
+        client.get_h1_range(
+            EPIC, start, end, point_limit=4, request_timezone=UTC_REQUEST
+        )
 
     diagnostic = json.loads(str(caught.value).split("; ", 1)[1])
     assert diagnostic["snapshotTimeUTC"] == labels[0]
@@ -200,7 +259,7 @@ def test_observed_november_range_stays_rejected(offset, safe_offset):
         "total_pages": 1,
     }
     assert diagnostic["allowance"] == {
-        "remaining": 9879,
+        "remaining": 9875,
         "total": 10000,
         "reset_seconds": 169890,
     }
@@ -212,7 +271,9 @@ def test_malformed_label_does_not_echo_untrusted_text():
     payload["prices"][1] = {**BAR, "snapshotTimeUTC": "private-invalid-label"}
     client, _ = authenticated(Stream(payload))
     with pytest.raises(IGMarketError, match="malformed") as caught:
-        client.get_h1_range(EPIC, START, END, point_limit=3)
+        client.get_h1_range(
+            EPIC, START, END, point_limit=3, request_timezone=UTC_REQUEST
+        )
     assert "private" not in str(caught.value)
 
 
@@ -221,14 +282,18 @@ def test_duplicate_range_labels_rejected():
     payload["prices"][1] = payload["prices"][0]
     client, _ = authenticated(Stream(payload))
     with pytest.raises(IGMarketError, match="duplicate or disordered"):
-        client.get_h1_range(EPIC, START, END, point_limit=3)
+        client.get_h1_range(
+            EPIC, START, END, point_limit=3, request_timezone=UTC_REQUEST
+        )
 
 
 @pytest.mark.parametrize("identity", [{"epic": "OTHER"}, {"resolution": "MINUTE"}])
 def test_wrong_series_rejected(identity):
     client, _ = authenticated(Stream({**response(), **identity}))
     with pytest.raises(IGMarketError, match="H1"):
-        client.get_h1_range(EPIC, START, END, point_limit=3)
+        client.get_h1_range(
+            EPIC, START, END, point_limit=3, request_timezone=UTC_REQUEST
+        )
 
 
 def test_empty_range_and_missing_allowance():
@@ -243,7 +308,9 @@ def test_empty_range_and_missing_allowance():
         },
     }
     client, _ = authenticated(Stream(payload))
-    result = client.get_h1_range(EPIC, START, END, point_limit=3)
+    result = client.get_h1_range(
+        EPIC, START, END, point_limit=3, request_timezone=UTC_REQUEST
+    )
     assert result.observations == ()
     assert result.allowance is None
 
@@ -256,7 +323,9 @@ def test_retry_after_reported_without_http_retry(status):
     )
     before = datetime.now(UTC)
     with pytest.raises(IGQuotaError) as error:
-        client.get_h1_range(EPIC, START, END, point_limit=3)
+        client.get_h1_range(
+            EPIC, START, END, point_limit=3, request_timezone=UTC_REQUEST
+        )
     assert error.value.retry_at >= before + timedelta(seconds=30)
     assert len(session.calls) == 2 and delays == []
 
@@ -273,7 +342,9 @@ def test_historical_exhaustion_distinct_from_throttle():
         )
     )
     with pytest.raises(IGQuotaError) as error:
-        client.get_h1_range(EPIC, START, END, point_limit=3)
+        client.get_h1_range(
+            EPIC, START, END, point_limit=3, request_timezone=UTC_REQUEST
+        )
     assert error.value.historical
     assert len(session.calls) == 2
 
@@ -282,10 +353,20 @@ def test_outbound_validation_and_response_bytes_budget():
     stream = Stream(b"x" * 262_145)
     client, session = authenticated(stream)
     with pytest.raises(ValueError, match="bounds"):
-        client.get_h1_range(EPIC, START, END, point_limit=2)
+        client.get_h1_range(
+            EPIC, START, END, point_limit=2, request_timezone=UTC_REQUEST
+        )
     with pytest.raises(ValueError, match="bounds"):
-        client.get_h1_range(EPIC, START, END + timedelta(days=1), point_limit=25)
+        client.get_h1_range(
+            EPIC,
+            START,
+            END + timedelta(days=1),
+            point_limit=25,
+            request_timezone=UTC_REQUEST,
+        )
     assert len(session.calls) == 1
     with pytest.raises(IGMarketError, match="byte budget"):
-        client.get_h1_range(EPIC, START, END, point_limit=3)
+        client.get_h1_range(
+            EPIC, START, END, point_limit=3, request_timezone=UTC_REQUEST
+        )
     assert stream.closed

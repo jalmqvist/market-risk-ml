@@ -557,8 +557,9 @@ def test_postgres_cli_demo_and_replacement(pg_db, monkeypatch, capsys):
         def authenticate(self):
             self.authenticated = True
 
-        def get_h1_range(self, epic, start, end, *, point_limit):
+        def get_h1_range(self, epic, start, end, *, point_limit, request_timezone):
             assert self.authenticated
+            assert request_timezone.name == "Etc/UTC"
             assert (epic, start, end, point_limit) == (
                 PRODUCT.instrument_id,
                 START,
@@ -573,7 +574,13 @@ def test_postgres_cli_demo_and_replacement(pg_db, monkeypatch, capsys):
     monkeypatch.setattr("mrml.data.ig_ingest.IGIngestion", with_test_clock)
     monkeypatch.setattr("mrml.data.ig_ingest.IGClient", DemoClient)
     identity = ["--epic", PRODUCT.instrument_id, "--variant", PRODUCT.variant]
-    params = ["ingest", *identity, "--retry-job", uncertain["job_id"]]
+    timezone = [
+        "--request-timezone",
+        "Etc/UTC",
+        "--request-timezone-approval",
+        "fixture",
+    ]
+    params = ["ingest", *identity, *timezone, "--retry-job", uncertain["job_id"]]
     monkeypatch.setenv("MRML_IG_ENVIRONMENT", "live")
     assert main(params) == 1
     assert len(rows(engine)) == 1
@@ -634,7 +641,23 @@ def test_postgres_cli_rejected_label_does_not_stage_or_commit(
     )
     identity = ["--epic", PRODUCT.instrument_id, "--variant", PRODUCT.variant]
 
-    assert main(["ingest", *identity, "--start", START.isoformat()]) == 1
+    params = [*identity, "--start", START.isoformat()]
+    assert main(["ingest", *params]) == 1
+    assert "requires --request-timezone" in capsys.readouterr().err
+    assert rows(engine) == []
+    assert session.calls == []
+
+    timezone = [
+        "--request-timezone",
+        "Europe/Stockholm",
+        "--request-timezone-approval",
+        "fixture",
+    ]
+    assert main(["plan", *params, *timezone]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["request"]["start"] == START.isoformat()
+    assert plan["wire_bounds"]["from"] == "2026-11-20T13:00:00"
+    assert main(["ingest", *params, *timezone]) == 1
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "before requested start" in captured.err

@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from http.client import HTTPConnection
 from typing import Any, Self
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 from requests import Response, Session
@@ -52,6 +53,56 @@ class IGAuthenticationError(IGError):
 
 class IGSessionError(IGError):
     """No usable IG session remains."""
+
+
+@dataclass(frozen=True)
+class IGRequestTimezone:
+    """Operator-approved account timezone for historical request bounds."""
+
+    name: str
+    approval: str = field(repr=False)
+    _zone: ZoneInfo = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.approval.strip():
+            raise IGError("IG historical request timezone requires approval evidence")
+        if self.name in {"localtime", "posixrules"} or self.name.startswith(
+            ("posix/", "right/")
+        ):
+            raise IGError("IG historical request timezone must be an IANA timezone")
+        try:
+            zone = ZoneInfo(self.name)
+        except (ValueError, ZoneInfoNotFoundError):
+            raise IGError(
+                "IG historical request timezone must be an IANA timezone"
+            ) from None
+        object.__setattr__(self, "_zone", zone)
+
+    def wire_bounds(self, start: datetime, end: datetime) -> tuple[str, str]:
+        if start.utcoffset() != timedelta(0) or end.utcoffset() != timedelta(0):
+            raise IGError("IG historical request bounds must be UTC")
+        local_start, local_end = (
+            bound.astimezone(self._zone) for bound in (start, end)
+        )
+        for bound in (local_start, local_end):
+            if bound.replace(fold=0).utcoffset() != bound.replace(fold=1).utcoffset():
+                raise IGError(
+                    "IG historical request bound is ambiguous in the approved timezone"
+                )
+        # Check offsets throughout the bounded window, including a terminal
+        # transition. The feed supports at most 24 UTC hours per request.
+        cursor = start
+        offset = local_start.utcoffset()
+        while cursor < end:
+            cursor = min(cursor + timedelta(hours=1), end)
+            if cursor.astimezone(self._zone).utcoffset() != offset:
+                raise IGError(
+                    "IG historical request spans a timezone offset transition"
+                )
+        return (
+            local_start.strftime("%Y-%m-%dT%H:%M:%S"),
+            local_end.strftime("%Y-%m-%dT%H:%M:%S"),
+        )
 
 
 class IGQuotaError(IGError):
@@ -415,8 +466,11 @@ class IGClient:
         end: datetime,
         *,
         point_limit: int,
+        request_timezone: IGRequestTimezone | None = None,
     ) -> IGPriceSample:
-        """Request one page using IG v3 offset-free date strings in UTC."""
+        """Serialize approved account wall times and validate UTC response labels."""
+        if request_timezone is None:
+            raise IGError("IG historical request requires an approved IANA timezone")
         validate_epic(epic)
         hour = timedelta(hours=1)
         if (
@@ -429,12 +483,13 @@ class IGClient:
             or not (end - start) // hour + 1 <= point_limit <= MAX_RANGE_INTERVALS + 1
         ):
             raise ValueError("Invalid IG H1 request bounds or point budget")
+        wire_start, wire_end = request_timezone.wire_bounds(start, end)
         payload, _ = self._request(
             f"/prices/{epic}",
             3,
             params={
-                "from": start.strftime("%Y-%m-%dT%H:%M:%S"),
-                "to": end.strftime("%Y-%m-%dT%H:%M:%S"),
+                "from": wire_start,
+                "to": wire_end,
                 "resolution": RESOLUTION,
                 "pageSize": point_limit,
                 "pageNumber": 1,
@@ -488,6 +543,8 @@ class IGClient:
                     "snapshotTimeUTC": row.raw_timestamp,
                     "requested_start_utc": start.isoformat(),
                     "requested_end_utc": end.isoformat(),
+                    "wire_from": wire_start,
+                    "wire_to": wire_end,
                     "observation_count": len(observations),
                     "returned_snapshot_times_utc": [
                         item.raw_timestamp for item in observations
