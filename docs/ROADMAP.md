@@ -1,6 +1,6 @@
 # MRML Roadmap (v0.6, 2026-11-19)
 
-> **Current status (2026-11-23):** A1-IG is merged and operationally verified within its read-only scope: the IG demo diagnostic completed authentication, account discovery, explicit EUR/USD instrument validation, and retrieval of 32 H1 bid/ask observations. A2 defines the offline canonical H1 contract and IG adapter. A3-S0 audited IG demo H1 timestamp semantics. A3-S1 adds verified PostgreSQL storage for source revisions and canonical H1 interpretations. A3-S2 implements bounded ingestion and durable recovery with offline and isolated PostgreSQL verification. A3-S3 demo operational verification remains open. No execution operations were exercised.
+> **Current status (2026-11-23):** A1-IG is merged and operationally verified within its read-only scope: the IG demo diagnostic completed authentication, account discovery, explicit EUR/USD instrument validation, and retrieval of 32 H1 bid/ask observations. A2 defines the offline canonical H1 contract and IG adapter. A3-S0 audited IG demo H1 timestamp semantics. A3-S1 adds verified PostgreSQL storage for source revisions and canonical H1 interpretations. A3-S2 implements bounded ingestion and durable recovery with offline and isolated PostgreSQL verification. A3-S3 bounded source-only demo ingestion and PostgreSQL readback passed. Milestone A source-only acceptance evidence is in PR #10 for review. No execution operations were exercised.
 
 ## Scope baseline and guiding principle (v0)
 
@@ -500,8 +500,9 @@ operational ingestion, and execution remain separate milestones.
 
 The offline contract defines immutable FX and H1 models, an explicit IG product
 mapping, a pure adapter, and sequence and eligibility diagnostics. The
-provider-neutral read protocol describes bounded H1 windows. IG timestamp
-boundary semantics still require source evidence before operational ingestion.
+provider-neutral read protocol describes bounded H1 windows. A3-S0 provides
+product-specific timestamp evidence. Canonical use requires explicit mapping
+and timestamp-policy approval.
 See [Canonical H1 market data](MARKET_DATA.md) for the schema, policy choices,
 revision keys and A3 prerequisites.
 
@@ -524,28 +525,38 @@ revision keys and A3 prerequisites.
   staged response recovery. The tests cover provisional rechecks, incomplete
   coverage, timestamp-policy approval, and historical as-of causality.
   [Market-data ingestion](MARKET_DATA.md#bounded-ig-demo-h1-ingestion)
-- **A3-S3 pending operational verification.** Verify document-format UTC
-  range bounds and edge behavior on a tightly bounded demo invocation.
-  Confirm actual allowance consumption, capture post-interval rechecks under
-  an approved policy and exercise operator recovery and freshness diagnostics.
-  Establish product-specific quote units and session evidence before any
-  normalization or coverage claims.
+- **A3-S3 source-only operational verification passed.** The corrected
+  credentialed request for `CS.D.EURUSD.CEE.IP`, variant `standard`, committed
+  four UTC observations from 06:00 through 09:00 on 2026-11-23. The operator
+  read them directly from PostgreSQL under one retrieval ID and checked
+  bid/ask OHLC decimals and source timestamp fidelity. Earlier credentialed
+  attempts captured shifted request bounds and reported allowance.
+  [A3-S3 acceptance report](audit/IG_A3_S3_ACCEPTANCE_REPORT.md)
 - **Deferred research.** Evaluate IG retail client sentiment as a separately
   collected data source, including IG market-ID mapping and comparison with
   the MSML source. This work is outside Milestone A acceptance.
   [IG retail client sentiment](MARKET_DATA.md#ig-retail-client-sentiment-deferred)
 
-**Milestone A acceptance evidence:** A1-IG's credentialed read-only diagnostic
-is complete. A2 has offline coverage for deterministic, source-faithful canonical
-bars and explicit eligibility and continuity semantics. A3 must demonstrate
-bounded historical/current ingestion with PostgreSQL persistence, quota-aware requests,
-idempotency, restart recovery and fresh-status diagnostics. Tests must cover
-normal and failure paths and demo/live separation. No order submission is
-needed to complete Milestone A.
+**Milestone A acceptance review:** The bounded source-only deliverable is
+demonstrated. Real demo evidence covers A1 read-only connectivity, the A3-S0
+source-label and revision observations, and A3-S3 bounded historical ingestion,
+edge labels, allowance reporting and PostgreSQL readback. Deterministic and
+isolated PostgreSQL tests cover A2 policy and continuity semantics, A3
+current-label planning and quota refusals, provisional rechecks, idempotency,
+restart recovery, fresh status, and demo/live separation. No order submission
+was required for this review.
+
+**Remaining evidence:** `Europe/Stockholm` is provisional for IG request
+serialization. Its successful November use does not independently establish
+the account's named timezone or historical DST behavior. Quotation units,
+explicit canonical mapping and timestamp-policy approval, and product-specific
+historical session evidence remain open. Preserve source units and unknown gap
+classification pending that evidence. These limitations bound the accepted
+source-only scope.
 
 **Deliverable:** tested, PostgreSQL-backed IG demo market-data ingestion behind
-MRML's provider boundary. A1-IG is complete; Milestone A remains open until
-A2 and A3 acceptance evidence is established.
+MRML's provider boundary. The source-only acceptance evidence is in
+[PR #10](https://github.com/jalmqvist/market-risk-ml/pull/10) for review.
 
 ### Milestone B — Position and order lifecycle on IG demo
 
