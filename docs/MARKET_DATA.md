@@ -184,7 +184,8 @@ and historical request windows before choosing the oldest unattempted label
 and its contiguous run. An empty response leaves durable evidence of the
 attempt and any unidentified gaps. The next incremental plan skips those
 attempted labels. An explicit replacement is available for a failed or
-uncertain attempt within the catch-up horizon.
+uncertain incremental or provisional attempt within the catch-up horizon.
+A committed incremental gap can be revisited explicitly.
 
 ### Request bounds and historical allowance
 
@@ -259,14 +260,41 @@ independent.
    auditable. The workflow provides idempotent persistence. External API
    execution can occur more than once across attempts.
 
+### Revisit a committed gap
+
+Use `status` to identify the missing `source_label` for the exact EPIC and
+variant. Pass that UTC hour to `--revisit-gap`. For example, substitute the
+reported label for `LABEL_UTC` in these commands.
+
+```sh
+python -m mrml.data.ig_ingest plan --epic EPIC --variant VARIANT --revisit-gap LABEL_UTC
+python -m mrml.data.ig_ingest ingest --epic EPIC --variant VARIANT --revisit-gap LABEL_UTC
+```
+
+The label must still be missing, lie inside the catch-up horizon and appear
+as a gap in a committed incremental outcome. A verified session closure is
+ineligible. The revisit has a one-point budget for one source label and uses
+the normal allowance reserve and throttle holds. It creates a new job and
+attempt UUID. The original outcome stays available for audit. Each product
+and label gets at most one revisit, including failed or uncertain calls.
+A restart can commit an already staged revisit with `recover` using the same
+identity. A revisit whose response was lost before staging remains uncertain.
+Ordinary ingestion continues to skip previously attempted gaps.
+
 ### Coverage, policy approval and provisional rechecks
 
 Status distinguishes the last attempted range, last successful commit, last
 known failure, latest source label, gap evidence and the latest outstanding
 provisional label. Reports list gaps, recheck candidates and outstanding
 attempts within the configured horizon. The last success, failure and source
-label can predate the horizon. An observed row or successful HTTP response
-establishes observation evidence. Canonical window coverage requires
+label can predate the horizon. In a committed outcome, `source_labels_complete`
+means every target label had a stored observation at commit time. It is
+unknown for outcomes predating this diagnostic. The independent
+`session_closure_coverage_verified` field (also exposed as `coverage_verified`)
+means the entire target window was supported by closure evidence. The
+`verified_contiguous_*` status fields describe a prefix based on closure
+evidence. `broker_candle_finality` stays unknown for these retrievals, including
+when all target labels were observed. Canonical window coverage requires
 additional evidence. A missing label without evidence stays `UNKNOWN`,
 including at a weekend. Programmatic callers can supply a versioned
 `SessionPolicy` for the exact product and UTC interval, using A2's
@@ -324,8 +352,11 @@ MRML_TEST_POSTGRES_URL='postgresql+psycopg://USER:PASSWORD@localhost:5432/DATABA
 ```
 
 The isolated PostgreSQL tests use temporary schemas and a non-UTC SQL session.
-Downgrading to `0002_market_data` removes the A3-S2 journal and staged data
-while retaining A3-S1 committed observations. Verify credentialed range
+Revision `0004_ig_gap_revisit` extends the attempt-kind constraint in place
+and preserves existing journal entries. Once the journal contains a revisit,
+downgrade to the earlier constraint is refused to preserve that history.
+With no revisit entries, downgrading to `0002_market_data` removes the
+A3-S2 journal and staged data while retaining A3-S1 committed observations. Verify credentialed range
 behavior and quota consumption in A3-S3 with explicitly bounded demo runs.
 
 ## Future data-source extensions

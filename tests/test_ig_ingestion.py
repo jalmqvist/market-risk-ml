@@ -35,6 +35,7 @@ from mrml.data.ig import (
 from mrml.data.ig_ingest import main
 from mrml.data.ig_ingestion import (
     IGIngestion,
+    IngestionBudget,
     IngestionRefused,
     SessionPolicy,
 )
@@ -567,3 +568,180 @@ def test_postgres_cli_demo_and_replacement(pg_db, monkeypatch, capsys):
     assert attempt["state"] == "committed"
     assert attempt["attempt_number"] == 2
     assert attempt["retrieval_id"] != uncertain["id"]
+
+
+@pytest.mark.parametrize("partial", [True, False])
+def test_committed_gap_requires_explicit_revisit(sqlite_db, partial):
+    ingestion = source_only(sqlite_db)
+    label = START - HOUR
+    response = sample() if partial else replace(sample(), observations=())
+    _, original = ingestion.run(lambda *args: response, start=label)
+    assert original.outcome["source_labels_complete"] is False
+    assert ingestion.run(forbid_fetch, start=label)[1] is None
+
+    planned = ingestion.plan(revisit_gap=label).request
+    assert planned.kind == "gap_revisit"
+    assert planned.start == label
+    assert planned.request_end == START - timedelta(seconds=1)
+    assert planned.point_limit == 1
+    assert len(rows(sqlite_db)) == 1
+    _, revisit = ingestion.run(
+        lambda *args: sample(observation(label)), revisit_gap=label
+    )
+    assert revisit.retrieval_id != original.retrieval_id
+    assert revisit.job_id != original.job_id
+    assert rows(sqlite_db)[0]["outcome"] == original.outcome
+    result = ingestion.describe_attempt(revisit)["outcome"]
+    assert result["source_labels_complete"] is True
+    assert result["session_closure_coverage_verified"] is False
+    assert result["broker_candle_finality"] == "unknown"
+    assert ingestion.status()["verified_contiguous_end"] is None
+    assert label.isoformat() not in {
+        gap["source_label"] for gap in ingestion.status()["gaps"]
+    }
+    with pytest.raises(IngestionRefused, match="already has"):
+        ingestion.run(forbid_fetch, revisit_gap=label)
+
+
+def test_gap_revisit_refuses_unattempted_other_product_horizon_and_closure(sqlite_db):
+    closed = START - HOUR
+    approval = approve(sqlite_db)
+
+    def session(product, start, end):
+        return SessionEvidence(GapKind.EXPECTED_CLOSURE, "verified fixture")
+
+    permitted = source_only(
+        sqlite_db,
+        approval=approval,
+        sessions=SessionPolicy(PRODUCT, "closure/v1", session),
+    )
+    permitted.run(lambda *args: replace(sample(), observations=()), start=closed)
+    ingestion = source_only(sqlite_db)
+    with pytest.raises(IngestionRefused, match="verified session closure"):
+        ingestion.run(forbid_fetch, revisit_gap=closed)
+    with pytest.raises(IngestionRefused, match="No committed incremental gap"):
+        ingestion.run(forbid_fetch, revisit_gap=closed - HOUR)
+    other = IGIngestion(sqlite_db, replace(PRODUCT, variant="another"), clock=Clock())
+    with pytest.raises(IngestionRefused, match="No committed incremental gap"):
+        other.run(forbid_fetch, revisit_gap=closed)
+    with pytest.raises(IngestionRefused, match="catch-up horizon"):
+        ingestion.run(forbid_fetch, revisit_gap=closed - 48 * HOUR)
+
+
+def test_gap_revisit_respects_quota_and_throttle(sqlite_db):
+    label = START - HOUR
+    ingestion = source_only(sqlite_db)
+    ingestion.run(
+        lambda *args: replace(
+            sample(),
+            observations=(),
+            allowance=IGAllowance(20, 100, 3600),
+        ),
+        start=label,
+    )
+    plan, row = ingestion.run(forbid_fetch, revisit_gap=label)
+    assert row is None and plan.refused and "reserve" in plan.message
+    assert len(rows(sqlite_db)) == 1
+    unrestricted = source_only(sqlite_db, budget=IngestionBudget(minimum_reserve=0))
+
+    def throttle(*args):
+        raise IGQuotaError("throttle", retry_at=RETRIEVED + HOUR)
+
+    with pytest.raises(IGQuotaError):
+        unrestricted.run(throttle, start=label - HOUR)
+    plan, row = unrestricted.run(forbid_fetch, revisit_gap=label)
+    assert row is None and plan.retry_after == RETRIEVED + HOUR
+
+
+def verify_gap_revisit_recovery(db, monkeypatch, *, upgrade=None):
+    ingestion = source_only(db)
+    _, original_attempt = ingestion.run(
+        lambda *args: replace(sample(), observations=()), start=START
+    )
+    if upgrade:
+        upgrade()
+    writer = ingestion.repo.record_ig_sample
+
+    def interrupt(*args, **kwargs):
+        writer(*args, **kwargs)
+        raise RuntimeError("interrupted after write")
+
+    monkeypatch.setattr(ingestion.repo, "record_ig_sample", interrupt)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        ingestion.run(lambda *args: sample(), revisit_gap=START)
+    attempts = {row["kind"]: row for row in rows(db)}
+    original, staged = attempts["incremental"], attempts["gap_revisit"]
+    assert original["id"] == original_attempt.id
+    assert (
+        original["state"] == "committed"
+        and original["outcome"] == original_attempt.outcome
+    )
+    assert staged["state"] == "staged"
+    assert not ingestion.repo.source_revisions(PRODUCT, "HOUR", START, START + HOUR)
+    restart = source_only(db)
+    plan, recovered = restart.run(forbid_fetch, revisit_gap=START)
+    assert plan.staged_attempt == recovered.id == staged["id"]
+    assert recovered.retrieval_id == staged["id"]
+    assert recovered.outcome["source_labels_complete"] is True
+    assert restart.recover() is None
+
+
+def test_gap_revisit_rollback_and_staged_recovery(sqlite_db, monkeypatch):
+    verify_gap_revisit_recovery(sqlite_db, monkeypatch)
+
+
+def test_postgres_gap_revisit_rollback_and_staged_recovery(pg_db, monkeypatch):
+    engine, config = pg_db
+    command.upgrade(config, "0003_ig_ingestion")
+    verify_gap_revisit_recovery(
+        engine, monkeypatch, upgrade=lambda: command.upgrade(config, "head")
+    )
+    with pytest.raises(IntegrityError):
+        command.downgrade(config, "0003_ig_ingestion")
+    assert any(row["kind"] == "gap_revisit" for row in rows(engine))
+
+
+def test_uncertain_gap_revisit_consumes_limit(sqlite_db):
+    ingestion = source_only(sqlite_db)
+    ingestion.run(lambda *args: replace(sample(), observations=()), start=START)
+
+    def transport(*args):
+        raise IGError("transport")
+
+    with pytest.raises(IGError):
+        ingestion.run(transport, revisit_gap=START)
+    restart = source_only(sqlite_db)
+    assert restart.recover() is None
+    with pytest.raises(IngestionRefused, match="already attempted"):
+        restart.run(forbid_fetch, revisit_gap=START)
+    with pytest.raises(IngestionRefused, match="cannot be retried"):
+        restart.run(forbid_fetch, retry_job=rows(sqlite_db)[1]["job_id"])
+
+
+def test_cli_gap_revisit_dry_run_never_loads_credentials(
+    sqlite_db, monkeypatch, capsys
+):
+    ingestion = source_only(sqlite_db)
+    ingestion.run(lambda *args: replace(sample(), observations=()), start=START)
+    monkeypatch.setenv("MRML_DATABASE_URL", str(sqlite_db.url))
+    monkeypatch.setattr("mrml.data.ig_ingest.load_probe_values", forbid_fetch)
+    monkeypatch.setattr(
+        "mrml.data.ig_ingest.IGIngestion",
+        lambda *args, **kwargs: IGIngestion(*args, **kwargs, clock=Clock()),
+    )
+    assert (
+        main(
+            [
+                "plan",
+                "--epic",
+                PRODUCT.instrument_id,
+                "--variant",
+                PRODUCT.variant,
+                "--revisit-gap",
+                START.isoformat(),
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["request"]["kind"] == "gap_revisit"
+    assert len(rows(sqlite_db)) == 1

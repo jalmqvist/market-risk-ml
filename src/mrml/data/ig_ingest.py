@@ -30,6 +30,11 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--start", type=datetime.fromisoformat)
     mode.add_argument("--recheck", action="store_true")
     mode.add_argument("--retry-job")
+    mode.add_argument(
+        "--revisit-gap",
+        type=datetime.fromisoformat,
+        help="revisit one missing UTC source label from a committed attempt",
+    )
     parser.add_argument("--quota-reset-confirmed", action="store_true")
     parser.add_argument("--max-intervals", type=int, default=6)
     parser.add_argument("--max-points", type=int, default=7)
@@ -39,7 +44,11 @@ def main(argv: list[str] | None = None) -> int:
     if bool(args.mapping_version) != bool(args.timestamp_policy):
         parser.error("Use --mapping-version and --timestamp-policy together")
     if args.command in {"status", "recover"} and (
-        args.start or args.recheck or args.retry_job or args.quota_reset_confirmed
+        args.start
+        or args.recheck
+        or args.retry_job
+        or args.revisit_gap
+        or args.quota_reset_confirmed
     ):
         parser.error("Request planning options apply to plan and ingest")
     url = os.environ.get("MRML_DATABASE_URL")
@@ -75,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
             start=args.start,
             recheck=args.recheck,
             retry_job=args.retry_job,
+            revisit_gap=args.revisit_gap,
             reset_confirmed=args.quota_reset_confirmed,
         )
         exit_code = 0

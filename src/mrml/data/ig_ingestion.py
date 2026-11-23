@@ -23,7 +23,7 @@ from mrml.data.canonical import (
     require_text,
     require_utc,
 )
-from mrml.data.history import GapKind, SessionLookup
+from mrml.data.history import GapKind, SessionEvidence, SessionLookup
 from mrml.data.ig import (
     MAX_RANGE_INTERVALS,
     RESOLUTION,
@@ -390,6 +390,7 @@ class IGIngestion:
         start: datetime | None,
         recheck: bool,
         retry_job: str | None,
+        revisit_gap: datetime | None,
         reset_confirmed: bool,
     ) -> Plan:
         current = _hour(now)
@@ -423,7 +424,8 @@ class IGIngestion:
                 raise IngestionRefused("No eligible job or replacement already used")
             row = previous[0]
             if (
-                row.state not in {"requesting", "failed"}
+                row.kind == "gap_revisit"
+                or row.state not in {"requesting", "failed"}
                 or row.policy_id != policy_id
                 or row.window_start < horizon
                 or row.request_end > now
@@ -468,6 +470,47 @@ class IGIngestion:
                 points = (requested_end - first) // HOUR + 1
             request = PlannedRequest(
                 first, stop, requested_end, points, row.kind, row.id
+            )
+        elif revisit_gap is not None:
+            require_hour(revisit_gap, "revisit source label")
+            if not horizon <= revisit_gap < now.replace(microsecond=0):
+                raise IngestionRefused(
+                    "Gap label is outside the available catch-up horizon"
+                )
+            if revisit_gap in observed:
+                raise IngestionRefused("Gap label already has a committed observation")
+            if any(
+                row.kind == "gap_revisit" and row.window_start == revisit_gap
+                for row in attempts
+            ):
+                raise IngestionRefused("The one allowed revisit was already attempted")
+            gaps = [
+                gap
+                for row in attempts
+                if row.state == "committed"
+                and row.kind == "incremental"
+                and row.outcome
+                for gap in row.outcome["gap_evidence"]
+                if datetime.fromisoformat(gap["source_label"]) == revisit_gap
+            ]
+            if not gaps:
+                raise IngestionRefused(
+                    "No committed incremental gap for this product and label"
+                )
+            _, evidence = self._session_evidence(revisit_gap, now)
+            if any(gap["verified_closure"] for gap in gaps) or (
+                evidence is not None and evidence.kind is GapKind.EXPECTED_CLOSURE
+            ):
+                raise IngestionRefused(
+                    "Gap label has evidence of a verified session closure"
+                )
+            stop = revisit_gap + HOUR
+            request = PlannedRequest(
+                revisit_gap,
+                stop,
+                min(stop - timedelta(seconds=1), now.replace(microsecond=0)),
+                1,
+                "gap_revisit",
             )
         elif recheck:
             if not self.budget.max_rechecks or policy_id is None:
@@ -556,10 +599,21 @@ class IGIngestion:
         start: datetime | None = None,
         recheck: bool = False,
         retry_job: str | None = None,
+        revisit_gap: datetime | None = None,
         reset_confirmed: bool = False,
     ) -> Plan:
-        if sum((start is not None, recheck, retry_job is not None)) > 1:
-            raise ValueError("Choose one of start, recheck or retry-job")
+        if (
+            sum(
+                (
+                    start is not None,
+                    recheck,
+                    retry_job is not None,
+                    revisit_gap is not None,
+                )
+            )
+            > 1
+        ):
+            raise ValueError("Choose one of start, recheck, retry-job or revisit-gap")
         with self._sessions() as session:
             return self._plan(
                 session,
@@ -567,6 +621,7 @@ class IGIngestion:
                 start=start,
                 recheck=recheck,
                 retry_job=retry_job,
+                revisit_gap=revisit_gap,
                 reset_confirmed=reset_confirmed,
             )
 
@@ -615,6 +670,20 @@ class IGIngestion:
                 return
             row.state, row.failure, row.retry_after = "failed", failure, retry_after
 
+    def _session_evidence(
+        self, label: datetime, at: datetime
+    ) -> tuple[datetime, SessionEvidence | None]:
+        start = (
+            label - HOUR
+            if self.approval
+            and self.approval.policy.meaning is TimestampMeaning.INTERVAL_END
+            else label
+        )
+        evidence = None
+        if self.session_policy and start + HOUR <= at:
+            evidence = self.session_policy.lookup(self.product, start, start + HOUR)
+        return start, evidence
+
     def _stage(
         self, attempt_id: str, sample: IGPriceSample, received: datetime
     ) -> None:
@@ -643,22 +712,11 @@ class IGIngestion:
             observed = self._observed(
                 session, row.product_id, row.window_start, row.window_end
             )
-            offset = (
-                HOUR
-                if self.approval
-                and self.approval.policy.meaning is TimestampMeaning.INTERVAL_END
-                else timedelta(0)
-            )
             gaps: list[dict[str, Any]] = []
             for label in _labels(row.window_start, row.window_end):
                 if label in observed or label in labels:
                     continue
-                interval_start = label - offset
-                evidence = None
-                if self.session_policy and interval_start + HOUR <= received:
-                    evidence = self.session_policy.lookup(
-                        self.product, interval_start, interval_start + HOUR
-                    )
+                interval_start, evidence = self._session_evidence(label, received)
                 gaps.append(
                     {
                         "source_label": label.isoformat(),
@@ -759,6 +817,8 @@ class IGIngestion:
             ]
             row.outcome = {
                 **row.outcome,
+                "source_labels_complete": len(observed)
+                == (row.window_end - row.window_start) // HOUR,
                 "coverage_verified": row.outcome["coverage_verified"]
                 and len(gaps) == len(row.outcome["gap_evidence"]),
                 "gap_evidence": gaps,
@@ -778,6 +838,7 @@ class IGIngestion:
         start: datetime | None = None,
         recheck: bool = False,
         retry_job: str | None = None,
+        revisit_gap: datetime | None = None,
         reset_confirmed: bool = False,
     ) -> tuple[Plan, Attempt | None]:
         with self._writer():
@@ -785,6 +846,7 @@ class IGIngestion:
                 start=start,
                 recheck=recheck,
                 retry_job=retry_job,
+                revisit_gap=revisit_gap,
                 reset_confirmed=reset_confirmed,
             )
             if plan.staged_attempt:
@@ -810,6 +872,14 @@ class IGIngestion:
     def describe_attempt(row: Attempt | None) -> dict[str, Any] | None:
         if row is None:
             return None
+        outcome = None
+        if row.state == "committed" and row.outcome is not None:
+            outcome = {
+                **row.outcome,
+                "source_labels_complete": row.outcome.get("source_labels_complete"),
+                "session_closure_coverage_verified": row.outcome["coverage_verified"],
+                "broker_candle_finality": "unknown",
+            }
         return {
             "job_id": row.job_id,
             "attempt_id": row.id,
@@ -827,7 +897,7 @@ class IGIngestion:
             "retrieval_id": row.retrieval_id,
             "failure": row.failure,
             "retry_after": row.retry_after,
-            "outcome": row.outcome if row.state == "committed" else None,
+            "outcome": outcome,
         }
 
     def status(self) -> dict[str, Any]:
@@ -955,6 +1025,7 @@ class IGIngestion:
                 "mapping_version": self.approval.mapping.version
                 if self.approval
                 else None,
+                "verified_contiguous_basis": "session_closure_evidence",
                 "verified_contiguous_start": verified_start,
                 "verified_contiguous_end": verified_until,
                 "gaps": [gaps[label] for label in sorted(gaps)],

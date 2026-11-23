@@ -225,8 +225,9 @@ class IGIngestionAttemptRow(MarketDataBase):
             name="ck_md_ig_attempt_budget",
         ),
         CheckConstraint(
-            "kind IN ('incremental', 'recheck') AND "
-            "(kind != 'recheck' OR policy_id IS NOT NULL)",
+            "kind IN ('incremental', 'recheck', 'gap_revisit') AND "
+            "(kind != 'recheck' OR policy_id IS NOT NULL) AND "
+            "(kind != 'gap_revisit' OR (attempt_number = 1 AND point_limit = 1))",
             name="ck_md_ig_request_kind",
         ),
         CheckConstraint(
