@@ -197,3 +197,82 @@ class InterpretationRow(MarketDataBase):
     completion_evidence: Mapped[str | None] = mapped_column(Text)
     first_available_at: Mapped[datetime | None] = mapped_column(UTCInstant())
     availability_evidence: Mapped[str | None] = mapped_column(Text)
+
+
+class IGIngestionAttemptRow(MarketDataBase):
+    __tablename__ = "market_data_ig_ingestion_attempts"
+    __table_args__ = (
+        UniqueConstraint("job_id", "attempt_number", name="uq_md_ig_job_attempt"),
+        Index("ix_md_ig_attempt_product", "product_id", "requested_at"),
+        CheckConstraint("window_end > window_start", name="ck_md_ig_window"),
+        CheckConstraint("resolution = 'HOUR'", name="ck_md_ig_resolution"),
+        CheckConstraint(
+            "(attempt_number = 1 AND id = job_id) OR "
+            "(attempt_number = 2 AND id != job_id)",
+            name="ck_md_ig_job_identity",
+        ),
+        CheckConstraint(
+            "(state IN ('staged', 'committed')) = (outcome IS NOT NULL) AND "
+            "(retry_after IS NULL OR state = 'failed')",
+            name="ck_md_ig_outcome",
+        ),
+        CheckConstraint(
+            "request_end > window_start AND request_end <= window_end",
+            name="ck_md_ig_request_end",
+        ),
+        CheckConstraint(
+            "attempt_number IN (1, 2) AND point_limit BETWEEN 1 AND 25",
+            name="ck_md_ig_attempt_budget",
+        ),
+        CheckConstraint(
+            "kind IN ('incremental', 'recheck') AND "
+            "(kind != 'recheck' OR policy_id IS NOT NULL)",
+            name="ck_md_ig_request_kind",
+        ),
+        CheckConstraint(
+            "(received_at IS NULL OR received_at >= requested_at) AND "
+            "(committed_at IS NULL OR committed_at >= received_at)",
+            name="ck_md_ig_attempt_times",
+        ),
+        CheckConstraint(
+            "(state = 'requesting' AND received_at IS NULL AND staged_response IS NULL "
+            "AND retrieval_id IS NULL AND failure IS NULL AND committed_at IS NULL) OR "
+            "(state = 'staged' AND received_at IS NOT NULL AND staged_response IS NOT "
+            "NULL AND retrieval_id IS NULL AND failure IS NULL "
+            "AND committed_at IS NULL) OR "
+            "(state = 'committed' AND received_at IS NOT NULL AND staged_response IS "
+            "NULL AND retrieval_id = id AND retrieval_id IS NOT NULL AND failure IS "
+            "NULL AND committed_at IS NOT NULL) OR "
+            "(state = 'failed' AND received_at IS NULL AND staged_response IS NULL "
+            "AND retrieval_id IS NULL AND failure IS NOT NULL "
+            "AND committed_at IS NULL)",
+            name="ck_md_ig_attempt_state",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    job_id: Mapped[str] = mapped_column(Text)
+    attempt_number: Mapped[int]
+    product_id: Mapped[int] = mapped_column(ForeignKey("market_data_products.id"))
+    policy_id: Mapped[int | None] = mapped_column(
+        ForeignKey("market_data_timestamp_policies.id")
+    )
+    resolution: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(Text)
+    window_start: Mapped[datetime] = mapped_column(UTCInstant())
+    window_end: Mapped[datetime] = mapped_column(UTCInstant())
+    request_end: Mapped[datetime] = mapped_column(UTCInstant())
+    requested_at: Mapped[datetime] = mapped_column(UTCInstant())
+    point_limit: Mapped[int]
+    received_at: Mapped[datetime | None] = mapped_column(UTCInstant())
+    committed_at: Mapped[datetime | None] = mapped_column(UTCInstant())
+    staged_response: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON(none_as_null=True)
+    )
+    retrieval_id: Mapped[str | None] = mapped_column(
+        ForeignKey("market_data_retrievals.id"), unique=True
+    )
+    failure: Mapped[str | None] = mapped_column(Text)
+    retry_after: Mapped[datetime | None] = mapped_column(UTCInstant())
+    outcome: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))

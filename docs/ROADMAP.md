@@ -1,6 +1,6 @@
 # MRML Roadmap (v0.6, 2026-11-19)
 
-> **Current status (2026-11-20):** A1-IG is merged and operationally verified within its read-only scope: the IG demo diagnostic completed authentication, account discovery, explicit EUR/USD instrument validation, and retrieval of 32 H1 bid/ask observations. A2 defines the offline canonical H1 contract and IG adapter. A3-S0 audited IG demo H1 timestamp semantics. A3-S1 adds verified PostgreSQL storage for source revisions and canonical H1 interpretations. Incremental ingestion remains open. No execution operations were exercised.
+> **Current status (2026-11-23):** A1-IG is merged and operationally verified within its read-only scope: the IG demo diagnostic completed authentication, account discovery, explicit EUR/USD instrument validation, and retrieval of 32 H1 bid/ask observations. A2 defines the offline canonical H1 contract and IG adapter. A3-S0 audited IG demo H1 timestamp semantics. A3-S1 adds verified PostgreSQL storage for source revisions and canonical H1 interpretations. A3-S2 implements bounded ingestion and durable recovery with offline and isolated PostgreSQL verification. A3-S3 demo operational verification remains open. No execution operations were exercised.
 
 ## Scope baseline and guiding principle (v0)
 
@@ -517,20 +517,23 @@ revision keys and A3 prerequisites.
   PostgreSQL 16 tests verify migrations, exact numeric and UTC timestamp
   round trips, concurrency, and reconstruction. See the
   [storage contract](MARKET_DATA.md#postgresql-persistence).
-- **A3-S2 pending.** Retrieve bounded missing or provisional H1 intervals, rather than repeatedly
-  downloading overlapping history. Validate and commit data transactionally;
-  advance checkpoints only after successful commits. Make duplicate requests,
-  retries and restarts idempotent, with explicit revision handling.
-- Support bounded historical and latest-price retrieval, quota-aware retries,
-  local reuse/caching, and conservative catch-up behavior. Do not undertake
-  unbounded backfills to populate the initial database.
-- Track quota metadata, observed gaps, retrieval failures, session health,
-  freshness, and continuity through concise read-only CLI/status output.
-- Ensure valid market closures do not trigger spurious gap-repair loops;
-  unresolved trading-session gaps remain visible and fail closed when relevant.
-- Verify recovery and refusal of stale or insufficiently supported data.
-  Establish product-specific quote units before any normalization. Use
-  offline and isolated database tests in CI.
+- **A3-S2 implemented and locally verified.** Explicit demo H1 date ranges
+  and local quota limits bound each invocation. The PostgreSQL attempt journal
+  supports durable staging, atomic commit, restart recovery and distinct source
+  revisions. The CLI exposes offline planning, status, bounded ingestion and
+  staged response recovery. The tests cover provisional rechecks, incomplete
+  coverage, timestamp-policy approval, and historical as-of causality.
+  [Market-data ingestion](MARKET_DATA.md#bounded-ig-demo-h1-ingestion)
+- **A3-S3 pending operational verification.** Verify document-format UTC
+  range bounds and edge behavior on a tightly bounded demo invocation.
+  Confirm actual allowance consumption, capture post-interval rechecks under
+  an approved policy and exercise operator recovery and freshness diagnostics.
+  Establish product-specific quote units and session evidence before any
+  normalization or coverage claims.
+- **Deferred research.** Evaluate IG retail client sentiment as a separately
+  collected data source, including IG market-ID mapping and comparison with
+  the MSML source. This work is outside Milestone A acceptance.
+  [IG retail client sentiment](MARKET_DATA.md#ig-retail-client-sentiment-deferred)
 
 **Milestone A acceptance evidence:** A1-IG's credentialed read-only diagnostic
 is complete. A2 has offline coverage for deterministic, source-faithful canonical

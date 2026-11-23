@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import re
@@ -23,6 +24,8 @@ DEMO_GATEWAY = "https://demo-api.ig.com/gateway/deal"
 SAMPLE_SIZE = 32
 _SEARCH_PAGE_SIZE = 50
 RESOLUTION = "HOUR"
+MAX_RANGE_INTERVALS = 24
+_MAX_RANGE_BYTES = 262_144
 
 _QUOTA_PREFIX = "error.public-api."
 _QUOTA_ERRORS = {
@@ -53,6 +56,17 @@ class IGSessionError(IGError):
 
 class IGQuotaError(IGError):
     """An IG allowance or request throttle was reached."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        historical: bool = False,
+        retry_at: datetime | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.historical = historical
+        self.retry_at = retry_at
 
 
 class IGMarketError(IGError):
@@ -180,6 +194,31 @@ def _retry_delay(value: str | None) -> float | None:
             except (TypeError, ValueError, OverflowError):
                 pass
     return max(0.0, delay) if math.isfinite(delay) and delay <= 2 else None
+
+
+def _retry_at(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        if value.isascii() and value.isdecimal():
+            return datetime.now(UTC) + timedelta(seconds=int(value))
+        deadline = parsedate_to_datetime(value)
+        return deadline.astimezone(UTC) if deadline.tzinfo is not None else None
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def _bounded_json(response: Response) -> dict[str, Any] | None:
+    with response:
+        data = bytearray()
+        for chunk in response.iter_content(chunk_size=8192):
+            data.extend(chunk)
+            if len(data) > _MAX_RANGE_BYTES:
+                raise IGMarketError("IG historical response exceeds the byte budget")
+        try:
+            return _object(json.loads(data))
+        except (ValueError, RecursionError):
+            return None
 
 
 def _json(response: Response) -> dict[str, Any] | None:
@@ -352,6 +391,84 @@ class IGClient:
             )
         return sample
 
+    def get_h1_range(
+        self,
+        epic: str,
+        start: datetime,
+        end: datetime,
+        *,
+        point_limit: int,
+    ) -> IGPriceSample:
+        """Request one page using IG v3 offset-free date strings in UTC."""
+        validate_epic(epic)
+        hour = timedelta(hours=1)
+        if (
+            start.utcoffset() != timedelta(0)
+            or end.utcoffset() != timedelta(0)
+            or start != start.replace(minute=0, second=0, microsecond=0)
+            or end.microsecond
+            or not timedelta(0) < end - start <= MAX_RANGE_INTERVALS * hour
+            or type(point_limit) is not int
+            or not (end - start) // hour + 1 <= point_limit <= MAX_RANGE_INTERVALS + 1
+        ):
+            raise ValueError("Invalid IG H1 request bounds or point budget")
+        payload, _ = self._request(
+            f"/prices/{epic}",
+            3,
+            params={
+                "from": start.strftime("%Y-%m-%dT%H:%M:%S"),
+                "to": end.strftime("%Y-%m-%dT%H:%M:%S"),
+                "resolution": RESOLUTION,
+                "pageSize": point_limit,
+                "pageNumber": 1,
+            },
+            retry=False,
+            bounded_body=True,
+        )
+        try:
+            prices = _array(payload.get("prices"))
+            metadata = _object(payload.get("metadata"))
+            page = _object(metadata.get("pageData"))
+            pages = _nonnegative_integer(page.get("totalPages"))
+            number = _nonnegative_integer(page.get("pageNumber"))
+            size = _nonnegative_integer(page.get("pageSize"))
+            if (
+                pages not in (0, 1)
+                or number not in ((0, 1) if not prices and pages == 0 else (1,))
+                or (prices and pages == 0)
+                or not len(prices) <= size <= point_limit
+                or len(prices) > point_limit
+                or (
+                    "size" in metadata
+                    and _nonnegative_integer(metadata["size"]) != len(prices)
+                )
+            ):
+                raise ValueError("Unexpected paging")
+            for key, expected in (("epic", epic), ("resolution", RESOLUTION)):
+                if any(
+                    key in item and item[key] != expected
+                    for item in (payload, metadata)
+                ):
+                    raise ValueError("Unexpected product or resolution")
+            observations = tuple(_observation(_object(row)) for row in prices)
+            if any(
+                not start <= row.timestamp <= end
+                or row.timestamp != row.timestamp.replace(minute=0, second=0)
+                for row in observations
+            ):
+                raise ValueError("Unexpected source label")
+            gaps = 0
+            for earlier, later in zip(observations, observations[1:], strict=False):
+                if earlier.timestamp >= later.timestamp:
+                    raise ValueError("Unexpected order or duplicate label")
+                gaps += later.timestamp - earlier.timestamp > hour
+            allowance = _allowance(metadata.get("allowance"))
+        except (ValueError, OverflowError):
+            raise IGMarketError(
+                "IG returned malformed or over-budget H1 data"
+            ) from None
+        return IGPriceSample(epic, RESOLUTION, observations, allowance, gaps)
+
     def _get_price_sample(
         self, epic: str, resolution: str, limit: int, *, retry: bool = True
     ) -> IGPriceSample:
@@ -403,6 +520,7 @@ class IGClient:
         *,
         login: bool = False,
         retry: bool = True,
+        bounded_body: bool = False,
         params: dict[str, str | int] | None = None,
     ) -> tuple[dict[str, Any], Response]:
         if not login and not self._tokens:
@@ -427,16 +545,21 @@ class IGClient:
                         json=self._login if login else None,
                         timeout=(5, 10),
                         allow_redirects=False,
+                        stream=bounded_body,
+                    )
+                    status = response.status_code
+                    if 300 <= status < 400:
+                        if bounded_body:
+                            response.close()
+                        raise IGError("IG returned an unexpected redirect")
+                    payload = (
+                        _bounded_json(response) if bounded_body else _json(response)
                     )
             except RequestException:
-                pass
+                response = None
             if response is None:
                 raise IGError("IG transport request failed")
 
-            status = response.status_code
-            if 300 <= status < 400:
-                raise IGError("IG returned an unexpected redirect")
-            payload = _json(response)
             if status == 200 and payload is not None and "errorCode" not in payload:
                 return payload, response
 
@@ -444,7 +567,11 @@ class IGClient:
             code = code if isinstance(code, str) else ""
             quota = _QUOTA_ERRORS.get(code.removeprefix(_QUOTA_PREFIX))
             if code.startswith(_QUOTA_PREFIX) and quota is not None:
-                raise IGQuotaError(f"IG {quota} exhausted")
+                raise IGQuotaError(
+                    f"IG {quota} exhausted",
+                    historical=quota == "historical-price allowance",
+                    retry_at=_retry_at(response.headers.get("Retry-After")),
+                )
             if code.startswith("error.security.api-key-"):
                 raise IGAuthenticationError("IG rejected the demo API key")
             if not login and (code in _SESSION_ERRORS or status == 401):
@@ -464,13 +591,20 @@ class IGClient:
                 if delay is not None:
                     self._sleep(delay)
                     continue
-            if status == 429:
-                raise IGQuotaError("IG temporarily throttled requests")
+            retry_at = _retry_at(response.headers.get("Retry-After"))
+            if status == 429 or (
+                bounded_body and status in (502, 503, 504) and retry_at is not None
+            ):
+                raise IGQuotaError(
+                    "IG temporarily throttled requests", retry_at=retry_at
+                )
             if path.startswith(("/markets", "/prices")) and status in (400, 403, 404):
                 raise IGMarketError(
                     "IG market or historical data unavailable or access denied"
                 )
             if status == 200:
+                if bounded_body:
+                    raise IGMarketError("IG returned a malformed historical response")
                 raise IGError("IG returned an unexpected response")
             raise IGError(f"IG request failed (HTTP {status})")
         raise AssertionError("IG retry loop exhausted")

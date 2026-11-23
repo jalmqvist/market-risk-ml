@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -261,6 +262,34 @@ class MarketDataRepository:
                 )
             return InstrumentMapping(FXInstrument(mapping.instrument), product, version)
 
+    def register_timestamp_policy(self, approval: ApprovedTimestampPolicy) -> None:
+        with self._sessions.begin() as session:
+            product_id = self._ensure_product(session, approval.mapping.product)
+            self._ensure_policy(session, product_id, approval)
+
+    def resolve_timestamp_policy(
+        self, product: SourceProduct, version: str, name: str
+    ) -> ApprovedTimestampPolicy:
+        mapping = self.resolve_mapping(product, version)
+        with self._sessions() as session:
+            row = session.scalar(
+                select(PolicyRow)
+                .join(MappingRow)
+                .join(ProductRow)
+                .where(
+                    *self._product_conditions(product),
+                    MappingRow.version == version,
+                    PolicyRow.name == name,
+                )
+            )
+            if row is None:
+                raise ValueError("No approved timestamp policy for this mapping")
+            return ApprovedTimestampPolicy(
+                mapping,
+                TimestampPolicy(row.name, TimestampMeaning(row.meaning), row.evidence),
+                row.approval,
+            )
+
     def record_ig_sample(
         self,
         product: SourceProduct,
@@ -273,8 +302,12 @@ class MarketDataRepository:
         interpreted_at: datetime | None = None,
         completion: Mapping[datetime, Completion] | None = None,
         availability: Mapping[datetime, Availability] | None = None,
+        session: Session | None = None,
     ) -> None:
-        """Store one bounded response, optionally interpreting every row atomically."""
+        """Store a response and its interpretations in one transaction.
+
+        A supplied session leaves transaction and rollback ownership to the caller.
+        """
         require_text(retrieval_id, "retrieval identity")
         require_utc(retrieved_at, "retrieval time")
         require_text(transformation_version, "transformation version")
@@ -303,7 +336,10 @@ class MarketDataRepository:
         metadata = asdict(sample.allowance) if sample.allowance else {}
         fingerprint = _digest([record["fingerprint"] for record in records])
 
-        with self._sessions.begin() as session:
+        transaction = (
+            self._sessions.begin() if session is None else nullcontext(session)
+        )
+        with transaction as session:
             product_id = self._ensure_product(session, product)
             key = dict(id=retrieval_id)
             values = dict(
@@ -502,18 +538,9 @@ class MarketDataRepository:
         return product_id
 
     @staticmethod
-    def _store_interpretations(
-        session: Session,
-        product_id: int,
-        sample: IGPriceSample,
-        retrieval_id: str,
-        retrieved_at: datetime,
-        approval: ApprovedTimestampPolicy,
-        transformation_version: str,
-        interpreted_at: datetime | None,
-        completion: Mapping[datetime, Completion] | None,
-        availability: Mapping[datetime, Availability] | None,
-    ) -> None:
+    def _ensure_policy(
+        session: Session, product_id: int, approval: ApprovedTimestampPolicy
+    ) -> int:
         mapping = approval.mapping
         mapping_id = session.scalar(
             select(MappingRow.id).filter_by(
@@ -534,6 +561,24 @@ class MarketDataRepository:
             approval=approval.approval,
         )
         assert isinstance(policy_id, int)
+        return policy_id
+
+    @staticmethod
+    def _store_interpretations(
+        session: Session,
+        product_id: int,
+        sample: IGPriceSample,
+        retrieval_id: str,
+        retrieved_at: datetime,
+        approval: ApprovedTimestampPolicy,
+        transformation_version: str,
+        interpreted_at: datetime | None,
+        completion: Mapping[datetime, Completion] | None,
+        availability: Mapping[datetime, Availability] | None,
+    ) -> None:
+        mapping = approval.mapping
+        policy = approval.policy
+        policy_id = MarketDataRepository._ensure_policy(session, product_id, approval)
         bars = adapt_ig_sample(
             sample,
             mappings=(mapping,),
