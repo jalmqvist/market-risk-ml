@@ -8,8 +8,8 @@ import math
 import re
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from dataclasses import dataclass, field
+from contextlib import contextmanager, suppress
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from http.client import HTTPConnection
@@ -458,14 +458,34 @@ class IGClient:
                     for item in (payload, metadata)
                 ):
                     raise ValueError("Unexpected product or resolution")
+            pagination = IGPricePage(number, size, pages)
             observations = tuple(_observation(_object(row)) for row in prices)
-            if any(
-                not start <= row.timestamp <= end
-                or row.timestamp != row.timestamp.replace(minute=0, second=0)
-                for row in observations
-            ):
+            for row in observations:
+                if row.timestamp < start:
+                    reason = "before requested start"
+                elif row.timestamp > end:
+                    reason = "after requested end"
+                elif row.timestamp != row.timestamp.replace(minute=0, second=0):
+                    reason = "not aligned to a UTC hour"
+                else:
+                    continue
+
+                # Only include allowlisted fields. Invalid allowance cannot obscure
+                # the label rejection or be used as quota evidence.
+                allowance = None
+                with suppress(ValueError):
+                    allowance = _allowance(metadata.get("allowance"))
+                diagnostic = {
+                    "snapshotTimeUTC": row.raw_timestamp,
+                    "requested_start_utc": start.isoformat(),
+                    "requested_end_utc": end.isoformat(),
+                    "observation_count": len(observations),
+                    "pagination": asdict(pagination),
+                    "allowance": asdict(allowance) if allowance is not None else None,
+                }
                 raise IGMarketError(
-                    "IG returned an out-of-window or non-hourly H1 source label"
+                    f"IG rejected H1 response: source label {reason}; "
+                    f"{json.dumps(diagnostic)}"
                 )
             gaps = 0
             for earlier, later in zip(observations, observations[1:], strict=False):
@@ -485,7 +505,7 @@ class IGClient:
             observations,
             allowance,
             gaps,
-            IGPricePage(number, size, pages),
+            pagination,
         )
 
     def _get_price_sample(

@@ -85,13 +85,64 @@ def test_malformed_or_partial_pagination_refused(patch):
     assert len(session.calls) == 2
 
 
-@pytest.mark.parametrize("bad_label", ["09:00:00", "12:00:01", "10:30:00", "10:00:00"])
-def test_unexpected_labels_and_duplicates_rejected(bad_label):
+@pytest.mark.parametrize(
+    ("bad_label", "reason", "invalid_allowance"),
+    [
+        ("2026-11-17T09:00:00Z", "before requested start", False),
+        ("2026-11-17T13:00:00+00:00", "after requested end", False),
+        ("2026-11-17T10:30:00", "not aligned to a UTC hour", False),
+        ("2026-11-17T12:00:01", "after requested end", True),
+    ],
+)
+def test_rejected_range_label_has_sanitized_evidence(
+    bad_label, reason, invalid_allowance
+):
     payload = response()
-    payload["prices"][1] = {**BAR, "snapshotTimeUTC": f"2026-11-17T{bad_label}"}
+    payload["prices"][1] = {**BAR, "snapshotTimeUTC": bad_label}
+    payload["prices"][1]["snapshotTime"] = "private-local-field"
+    payload["metadata"]["pageData"]["private"] = "private-page-field"
+    allowance = payload["metadata"]["allowance"]
+    allowance["private"] = "private-allowance-field"
+    if invalid_allowance:
+        allowance["remainingAllowance"] = "private-invalid-value"
+    client, session = authenticated(Stream(payload))
+
+    with pytest.raises(IGMarketError, match=reason) as caught:
+        client.get_h1_range(EPIC, START, END, point_limit=3)
+
+    message = str(caught.value)
+    assert "private" not in message and "openPrice" not in message
+    assert json.loads(message.split("; ", 1)[1]) == {
+        "snapshotTimeUTC": bad_label,
+        "requested_start_utc": START.isoformat(),
+        "requested_end_utc": END.isoformat(),
+        "observation_count": 2,
+        "pagination": {"page_number": 1, "page_size": 3, "total_pages": 1},
+        "allowance": None
+        if invalid_allowance
+        else {
+            "remaining": allowance["remainingAllowance"],
+            "total": allowance["totalAllowance"],
+            "reset_seconds": allowance["allowanceExpiry"],
+        },
+    }
+    assert len(session.calls) == 2
+
+
+def test_malformed_label_does_not_echo_untrusted_text():
+    payload = response()
+    payload["prices"][1] = {**BAR, "snapshotTimeUTC": "private-invalid-label"}
     client, _ = authenticated(Stream(payload))
-    reason = "duplicate or disordered" if bad_label == "10:00:00" else "out-of-window"
-    with pytest.raises(IGMarketError, match=reason):
+    with pytest.raises(IGMarketError, match="malformed") as caught:
+        client.get_h1_range(EPIC, START, END, point_limit=3)
+    assert "private" not in str(caught.value)
+
+
+def test_duplicate_range_labels_rejected():
+    payload = response()
+    payload["prices"][1] = payload["prices"][0]
+    client, _ = authenticated(Stream(payload))
+    with pytest.raises(IGMarketError, match="duplicate or disordered"):
         client.get_h1_range(EPIC, START, END, point_limit=3)
 
 

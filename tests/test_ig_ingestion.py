@@ -11,6 +11,8 @@ import test_market_data_storage
 from alembic import command
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
+from test_ig_h1_range import Stream, response
+from test_ig_probe import BAR, client_for, login
 from test_market_data_storage import (  # noqa: F401
     MAPPING,
     PRODUCT,
@@ -601,6 +603,57 @@ def test_postgres_cli_demo_and_replacement(pg_db, monkeypatch, capsys):
     }
     assert main(["status", *identity]) == 0
     assert json.loads(capsys.readouterr().out)["last_committed"] == attempt
+
+
+def test_postgres_cli_rejected_label_does_not_stage_or_commit(
+    pg_db, monkeypatch, capsys
+):
+    engine, config = pg_db
+    command.upgrade(config, "head")
+    payload = response()
+    label = (START - HOUR).isoformat()
+    payload["prices"] = [{**BAR, "snapshotTimeUTC": label}]
+    payload["metadata"]["size"] = 1
+    payload["metadata"]["pageData"]["pageSize"] = 1
+    client, session = client_for(login(), Stream(payload))
+
+    def with_test_clock(*args, **kwargs):
+        return IGIngestion(*args, clock=Clock(), **kwargs)
+
+    monkeypatch.setattr("mrml.data.ig_ingest.IGIngestion", with_test_clock)
+    monkeypatch.setattr("mrml.data.ig_ingest.IGClient", lambda *args: client)
+    monkeypatch.setattr(
+        "mrml.data.ig_ingest.load_probe_values",
+        lambda: {
+            "MRML_IG_ENVIRONMENT": "demo",
+            "MRML_IG_API_KEY": "test-key",
+            "MRML_IG_USERNAME": "test-user",
+            "MRML_IG_PASSWORD": "test-password",
+            "MRML_IG_EPIC": PRODUCT.instrument_id,
+        },
+    )
+    identity = ["--epic", PRODUCT.instrument_id, "--variant", PRODUCT.variant]
+
+    assert main(["ingest", *identity, "--start", START.isoformat()]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "before requested start" in captured.err
+    assert json.loads(captured.err.split("; ", 1)[1])["snapshotTimeUTC"] == label
+    assert len(session.calls) == 2
+
+    [attempt] = rows(engine)
+    assert attempt["state"] == "failed"
+    assert attempt["failure"] == "market_or_invalid_response"
+    assert attempt["staged_response"] is None and attempt["retrieval_id"] is None
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(ObservationRow)) == 0
+        assert connection.scalar(select(func.count()).select_from(RetrievalRow)) == 0
+
+    assert main(["status", *identity]) == 0
+    status = json.loads(capsys.readouterr().out)
+    assert status["last_committed"] is None
+    assert status["verified_contiguous_end"] is None
+    assert status["historical_allowance"]["last_reported"] is None
 
 
 @pytest.mark.parametrize("partial", [True, False])
