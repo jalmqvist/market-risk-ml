@@ -268,7 +268,8 @@ reported label for `LABEL_UTC` in these commands.
 
 ```sh
 python -m mrml.data.ig_ingest plan --epic EPIC --variant VARIANT --revisit-gap LABEL_UTC
-python -m mrml.data.ig_ingest ingest --epic EPIC --variant VARIANT --revisit-gap LABEL_UTC
+python -m mrml.data.ig_ingest ingest --epic EPIC --variant VARIANT \
+  --request-timezone IANA_ZONE --request-timezone-approval APPROVAL_REF --revisit-gap LABEL_UTC
 ```
 
 The label must still be missing, lie inside the catch-up horizon and appear
@@ -332,8 +333,10 @@ Set `MRML_DATABASE_URL` for the PostgreSQL 16 Compose database, then apply
 python -m mrml.data.ig_ingest plan --epic EPIC --variant VARIANT
 python -m mrml.data.ig_ingest status --epic EPIC --variant VARIANT
 python -m mrml.data.ig_ingest recover --epic EPIC --variant VARIANT
-python -m mrml.data.ig_ingest ingest --epic EPIC --variant VARIANT
 python -m mrml.data.ig_ingest ingest --epic EPIC --variant VARIANT \
+  --request-timezone IANA_ZONE --request-timezone-approval APPROVAL_REF
+python -m mrml.data.ig_ingest ingest --epic EPIC --variant VARIANT \
+  --request-timezone IANA_ZONE --request-timezone-approval APPROVAL_REF \
   --mapping-version MAPPING --timestamp-policy POLICY --recheck
 ```
 
@@ -357,7 +360,9 @@ and preserves existing journal entries. Once the journal contains a revisit,
 downgrade to the earlier constraint is refused to preserve that history.
 With no revisit entries, downgrading to `0002_market_data` removes the
 A3-S2 journal and staged data while retaining A3-S1 committed observations. Verify credentialed range
-behavior and quota consumption in A3-S3 with explicitly bounded demo runs.
+behavior and quota consumption with the [A3-S3 demo runbook](audit/IG_A3_S3_OPERATIONAL_VERIFICATION.md).
+
+Historical H1 ingestion requires an explicitly reviewed IG account IANA timezone and approval reference. Configured plans show the provider wall-clock wire bounds alongside the internal UTC range. See the [A3-S3 runbook](audit/IG_A3_S3_OPERATIONAL_VERIFICATION.md) for account evidence and transition refusals.
 
 ## Future data-source extensions
 

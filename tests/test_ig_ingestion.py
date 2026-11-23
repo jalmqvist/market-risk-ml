@@ -11,6 +11,8 @@ import test_market_data_storage
 from alembic import command
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
+from test_ig_h1_range import Stream, response
+from test_ig_probe import BAR, client_for, login
 from test_market_data_storage import (  # noqa: F401
     MAPPING,
     PRODUCT,
@@ -29,6 +31,7 @@ from mrml.data.ig import (
     IGAuthenticationError,
     IGError,
     IGMarketError,
+    IGPricePage,
     IGQuotaError,
     IGSessionError,
 )
@@ -41,6 +44,7 @@ from mrml.data.ig_ingestion import (
 )
 from mrml.data.storage import MarketDataRepository
 from mrml.data.storage_models import IGIngestionAttemptRow, ObservationRow, RetrievalRow
+from mrml.journal.models import Run
 
 Attempt = IGIngestionAttemptRow
 pg_db = test_market_data_storage.pg_db
@@ -281,7 +285,9 @@ def verify_stage_recovery(db, monkeypatch):
 
     monkeypatch.setattr(ingestion.repo, "record_ig_sample", fail_after_inserts)
     with pytest.raises(RuntimeError, match="interrupted"):
-        ingestion.run(lambda *args: sample(), start=START)
+        ingestion.run(
+            lambda *args: replace(sample(), page=IGPricePage(1, 1, 1)), start=START
+        )
     [staged] = rows(db)
     assert staged["state"] == "staged"
     assert staged["retrieval_id"] is None
@@ -297,6 +303,9 @@ def verify_stage_recovery(db, monkeypatch):
     assert committed.id == staged["id"]
     assert committed.retrieval_id == staged["id"]
     assert committed.staged_response is None
+    outcome = restart.status()["last_committed"]["outcome"]
+    assert outcome["observed_source_labels"] == [sample().observations[0].raw_timestamp]
+    assert outcome["pagination"] == {"page_number": 1, "page_size": 1, "total_pages": 1}
     assert restart.recover() is None
     assert restart._commit(staged["id"]).committed_at == committed.committed_at
     assert not history(restart.repo, as_of=RETRIEVED, approval=approval).revisions
@@ -425,6 +434,21 @@ def test_postgres_migration_recovery_and_referential_integrity(pg_db, monkeypatc
     engine, config = pg_db
     command.upgrade(config, "0002_market_data")
     before = set(inspect(engine).get_table_names())
+    with engine.begin() as connection:
+        connection.execute(
+            Run.__table__.insert().values(
+                id="existing-run",
+                run_date=START.date(),
+                mode="demo",
+                config_hash="a" * 64,
+                bundle_hash="b" * 64,
+                code_version="fixture",
+                status="completed",
+                summary={"sentinel": True},
+                created_at=START,
+            )
+        )
+        journal_before = connection.execute(select(Run.__table__)).one()
     command.upgrade(config, "head")
     command.check(config)
     committed = verify_stage_recovery(engine, monkeypatch)
@@ -441,6 +465,7 @@ def test_postgres_migration_recovery_and_referential_integrity(pg_db, monkeypatc
     assert before == set(inspect(engine).get_table_names())
     with engine.connect() as connection:
         assert connection.scalar(select(RetrievalRow.id)) == committed
+        assert connection.execute(select(Run.__table__)).one() == journal_before
 
 
 def test_postgres_concurrent_attempt_and_recovery(pg_db, monkeypatch):
@@ -532,15 +557,16 @@ def test_postgres_cli_demo_and_replacement(pg_db, monkeypatch, capsys):
         def authenticate(self):
             self.authenticated = True
 
-        def get_h1_range(self, epic, start, end, *, point_limit):
+        def get_h1_range(self, epic, start, end, *, point_limit, request_timezone):
             assert self.authenticated
+            assert request_timezone.name == "Etc/UTC"
             assert (epic, start, end, point_limit) == (
                 PRODUCT.instrument_id,
                 START,
                 RETRIEVED.replace(microsecond=0),
                 1,
             )
-            return sample()
+            return replace(sample(), page=IGPricePage(1, 1, 1))
 
     def with_test_clock(*args, **kwargs):
         return IGIngestion(*args, clock=clock, **kwargs)
@@ -548,7 +574,13 @@ def test_postgres_cli_demo_and_replacement(pg_db, monkeypatch, capsys):
     monkeypatch.setattr("mrml.data.ig_ingest.IGIngestion", with_test_clock)
     monkeypatch.setattr("mrml.data.ig_ingest.IGClient", DemoClient)
     identity = ["--epic", PRODUCT.instrument_id, "--variant", PRODUCT.variant]
-    params = ["ingest", *identity, "--retry-job", uncertain["job_id"]]
+    timezone = [
+        "--request-timezone",
+        "Etc/UTC",
+        "--request-timezone-approval",
+        "fixture",
+    ]
+    params = ["ingest", *identity, *timezone, "--retry-job", uncertain["job_id"]]
     monkeypatch.setenv("MRML_IG_ENVIRONMENT", "live")
     assert main(params) == 1
     assert len(rows(engine)) == 1
@@ -568,6 +600,83 @@ def test_postgres_cli_demo_and_replacement(pg_db, monkeypatch, capsys):
     assert attempt["state"] == "committed"
     assert attempt["attempt_number"] == 2
     assert attempt["retrieval_id"] != uncertain["id"]
+    assert attempt["outcome"]["observed_source_labels"] == [
+        sample().observations[0].raw_timestamp
+    ]
+    assert attempt["outcome"]["pagination"] == {
+        "page_number": 1,
+        "page_size": 1,
+        "total_pages": 1,
+    }
+    assert main(["status", *identity]) == 0
+    assert json.loads(capsys.readouterr().out)["last_committed"] == attempt
+
+
+def test_postgres_cli_rejected_label_does_not_stage_or_commit(
+    pg_db, monkeypatch, capsys
+):
+    engine, config = pg_db
+    command.upgrade(config, "head")
+    payload = response()
+    label = (START - HOUR).isoformat()
+    payload["prices"] = [{**BAR, "snapshotTimeUTC": label}]
+    payload["metadata"]["size"] = 1
+    payload["metadata"]["pageData"]["pageSize"] = 1
+    client, session = client_for(login(), Stream(payload))
+
+    def with_test_clock(*args, **kwargs):
+        return IGIngestion(*args, clock=Clock(), **kwargs)
+
+    monkeypatch.setattr("mrml.data.ig_ingest.IGIngestion", with_test_clock)
+    monkeypatch.setattr("mrml.data.ig_ingest.IGClient", lambda *args: client)
+    monkeypatch.setattr(
+        "mrml.data.ig_ingest.load_probe_values",
+        lambda: {
+            "MRML_IG_ENVIRONMENT": "demo",
+            "MRML_IG_API_KEY": "test-key",
+            "MRML_IG_USERNAME": "test-user",
+            "MRML_IG_PASSWORD": "test-password",
+            "MRML_IG_EPIC": PRODUCT.instrument_id,
+        },
+    )
+    identity = ["--epic", PRODUCT.instrument_id, "--variant", PRODUCT.variant]
+
+    params = [*identity, "--start", START.isoformat()]
+    assert main(["ingest", *params]) == 1
+    assert "requires --request-timezone" in capsys.readouterr().err
+    assert rows(engine) == []
+    assert session.calls == []
+
+    timezone = [
+        "--request-timezone",
+        "Europe/Stockholm",
+        "--request-timezone-approval",
+        "fixture",
+    ]
+    assert main(["plan", *params, *timezone]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["request"]["start"] == START.isoformat()
+    assert plan["wire_bounds"]["from"] == "2026-11-20T13:00:00"
+    assert main(["ingest", *params, *timezone]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "before requested start" in captured.err
+    assert json.loads(captured.err.split("; ", 1)[1])["snapshotTimeUTC"] == label
+    assert len(session.calls) == 2
+
+    [attempt] = rows(engine)
+    assert attempt["state"] == "failed"
+    assert attempt["failure"] == "market_or_invalid_response"
+    assert attempt["staged_response"] is None and attempt["retrieval_id"] is None
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(ObservationRow)) == 0
+        assert connection.scalar(select(func.count()).select_from(RetrievalRow)) == 0
+
+    assert main(["status", *identity]) == 0
+    status = json.loads(capsys.readouterr().out)
+    assert status["last_committed"] is None
+    assert status["verified_contiguous_end"] is None
+    assert status["historical_allowance"]["last_reported"] is None
 
 
 @pytest.mark.parametrize("partial", [True, False])

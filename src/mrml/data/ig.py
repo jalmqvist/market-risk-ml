@@ -8,12 +8,13 @@ import math
 import re
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from dataclasses import dataclass, field
+from contextlib import contextmanager, suppress
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from http.client import HTTPConnection
 from typing import Any, Self
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 from requests import Response, Session
@@ -52,6 +53,56 @@ class IGAuthenticationError(IGError):
 
 class IGSessionError(IGError):
     """No usable IG session remains."""
+
+
+@dataclass(frozen=True)
+class IGRequestTimezone:
+    """Operator-approved account timezone for historical request bounds."""
+
+    name: str
+    approval: str = field(repr=False)
+    _zone: ZoneInfo = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.approval.strip():
+            raise IGError("IG historical request timezone requires approval evidence")
+        if self.name in {"localtime", "posixrules"} or self.name.startswith(
+            ("posix/", "right/")
+        ):
+            raise IGError("IG historical request timezone must be an IANA timezone")
+        try:
+            zone = ZoneInfo(self.name)
+        except (ValueError, ZoneInfoNotFoundError):
+            raise IGError(
+                "IG historical request timezone must be an IANA timezone"
+            ) from None
+        object.__setattr__(self, "_zone", zone)
+
+    def wire_bounds(self, start: datetime, end: datetime) -> tuple[str, str]:
+        if start.utcoffset() != timedelta(0) or end.utcoffset() != timedelta(0):
+            raise IGError("IG historical request bounds must be UTC")
+        local_start, local_end = (
+            bound.astimezone(self._zone) for bound in (start, end)
+        )
+        for bound in (local_start, local_end):
+            if bound.replace(fold=0).utcoffset() != bound.replace(fold=1).utcoffset():
+                raise IGError(
+                    "IG historical request bound is ambiguous in the approved timezone"
+                )
+        # Check offsets throughout the bounded window, including a terminal
+        # transition. The feed supports at most 24 UTC hours per request.
+        cursor = start
+        offset = local_start.utcoffset()
+        while cursor < end:
+            cursor = min(cursor + timedelta(hours=1), end)
+            if cursor.astimezone(self._zone).utcoffset() != offset:
+                raise IGError(
+                    "IG historical request spans a timezone offset transition"
+                )
+        return (
+            local_start.strftime("%Y-%m-%dT%H:%M:%S"),
+            local_end.strftime("%Y-%m-%dT%H:%M:%S"),
+        )
 
 
 class IGQuotaError(IGError):
@@ -111,12 +162,20 @@ class IGAllowance:
 
 
 @dataclass(frozen=True)
+class IGPricePage:
+    page_number: int
+    page_size: int
+    total_pages: int
+
+
+@dataclass(frozen=True)
 class IGPriceSample:
     epic: str = field(repr=False)
     resolution: str
     observations: tuple[IGObservation, ...]
     allowance: IGAllowance | None
     gaps: int
+    page: IGPricePage | None = None
 
 
 def validate_epic(value: str) -> None:
@@ -245,6 +304,7 @@ class IGClient:
         self._api_key = api_key
         self._login = {"identifier": username, "password": password}
         self._tokens: dict[str, str] = {}
+        self._login_timezone_offset_hours: int | float | None = None
         self._session = requests.Session() if session is None else session
         self._owns_session = session is None
         if self._owns_session:
@@ -262,6 +322,7 @@ class IGClient:
 
     def authenticate(self) -> None:
         self._tokens.clear()
+        self._login_timezone_offset_hours = None
         payload, response = self._request("/session", 2, login=True)
         headers = CaseInsensitiveDict(response.headers)
         tokens = {name: headers.get(name, "") for name in ("CST", "X-SECURITY-TOKEN")}
@@ -274,6 +335,13 @@ class IGClient:
             if not isinstance(value, str) or not value.strip():
                 raise IGAuthenticationError("IG returned malformed login data")
         self._tokens = tokens
+        offset = payload.get("timezoneOffset")
+        if (
+            isinstance(offset, (int, float))
+            and not isinstance(offset, bool)
+            and -14 <= offset <= 14
+        ):
+            self._login_timezone_offset_hours = offset
 
     def get_accounts(self) -> tuple[IGAccount, ...]:
         payload, _ = self._request("/accounts", 1)
@@ -398,8 +466,11 @@ class IGClient:
         end: datetime,
         *,
         point_limit: int,
+        request_timezone: IGRequestTimezone | None = None,
     ) -> IGPriceSample:
-        """Request one page using IG v3 offset-free date strings in UTC."""
+        """Serialize approved account wall times and validate UTC response labels."""
+        if request_timezone is None:
+            raise IGError("IG historical request requires an approved IANA timezone")
         validate_epic(epic)
         hour = timedelta(hours=1)
         if (
@@ -412,12 +483,13 @@ class IGClient:
             or not (end - start) // hour + 1 <= point_limit <= MAX_RANGE_INTERVALS + 1
         ):
             raise ValueError("Invalid IG H1 request bounds or point budget")
+        wire_start, wire_end = request_timezone.wire_bounds(start, end)
         payload, _ = self._request(
             f"/prices/{epic}",
             3,
             params={
-                "from": start.strftime("%Y-%m-%dT%H:%M:%S"),
-                "to": end.strftime("%Y-%m-%dT%H:%M:%S"),
+                "from": wire_start,
+                "to": wire_end,
                 "resolution": RESOLUTION,
                 "pageSize": point_limit,
                 "pageNumber": 1,
@@ -450,24 +522,61 @@ class IGClient:
                     for item in (payload, metadata)
                 ):
                     raise ValueError("Unexpected product or resolution")
+            pagination = IGPricePage(number, size, pages)
             observations = tuple(_observation(_object(row)) for row in prices)
-            if any(
-                not start <= row.timestamp <= end
-                or row.timestamp != row.timestamp.replace(minute=0, second=0)
-                for row in observations
-            ):
-                raise ValueError("Unexpected source label")
+            for row in observations:
+                if row.timestamp < start:
+                    reason = "before requested start"
+                elif row.timestamp > end:
+                    reason = "after requested end"
+                elif row.timestamp != row.timestamp.replace(minute=0, second=0):
+                    reason = "not aligned to a UTC hour"
+                else:
+                    continue
+
+                # Only include allowlisted fields. Invalid allowance cannot obscure
+                # the label rejection or be used as quota evidence.
+                allowance = None
+                with suppress(ValueError):
+                    allowance = _allowance(metadata.get("allowance"))
+                diagnostic = {
+                    "snapshotTimeUTC": row.raw_timestamp,
+                    "requested_start_utc": start.isoformat(),
+                    "requested_end_utc": end.isoformat(),
+                    "wire_from": wire_start,
+                    "wire_to": wire_end,
+                    "observation_count": len(observations),
+                    "returned_snapshot_times_utc": [
+                        item.raw_timestamp for item in observations
+                    ],
+                    "login_timezone_offset_hours": self._login_timezone_offset_hours,
+                    "pagination": asdict(pagination),
+                    "allowance": asdict(allowance) if allowance is not None else None,
+                }
+                raise IGMarketError(
+                    f"IG rejected H1 response: source label {reason}; "
+                    f"{json.dumps(diagnostic)}"
+                )
             gaps = 0
             for earlier, later in zip(observations, observations[1:], strict=False):
                 if earlier.timestamp >= later.timestamp:
-                    raise ValueError("Unexpected order or duplicate label")
+                    raise IGMarketError(
+                        "IG returned duplicate or disordered H1 source labels"
+                    )
                 gaps += later.timestamp - earlier.timestamp > hour
             allowance = _allowance(metadata.get("allowance"))
         except (ValueError, OverflowError):
             raise IGMarketError(
                 "IG returned malformed or over-budget H1 data"
             ) from None
-        return IGPriceSample(epic, RESOLUTION, observations, allowance, gaps)
+        return IGPriceSample(
+            epic,
+            RESOLUTION,
+            observations,
+            allowance,
+            gaps,
+            pagination,
+        )
 
     def _get_price_sample(
         self, epic: str, resolution: str, limit: int, *, retry: bool = True

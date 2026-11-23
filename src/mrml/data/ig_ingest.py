@@ -13,7 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from mrml.data.canonical import SourceProduct
-from mrml.data.ig import IGClient, IGError, IGPriceSample
+from mrml.data.ig import IGClient, IGError, IGPriceSample, IGRequestTimezone
 from mrml.data.ig_ingestion import IGIngestion, IngestionBudget, IngestionRefused, Plan
 from mrml.data.ig_probe import ProbeConfig, load_probe_values
 from mrml.data.storage import MarketDataRepository
@@ -26,6 +26,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--variant", required=True)
     parser.add_argument("--mapping-version")
     parser.add_argument("--timestamp-policy")
+    parser.add_argument(
+        "--request-timezone", help="Approved IANA zone for IG request bounds"
+    )
+    parser.add_argument(
+        "--request-timezone-approval",
+        help="Reviewed account timezone evidence reference",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--start", type=datetime.fromisoformat)
     mode.add_argument("--recheck", action="store_true")
@@ -43,12 +50,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if bool(args.mapping_version) != bool(args.timestamp_policy):
         parser.error("Use --mapping-version and --timestamp-policy together")
+    if bool(args.request_timezone) != bool(args.request_timezone_approval):
+        parser.error("Use --request-timezone and --request-timezone-approval together")
     if args.command in {"status", "recover"} and (
         args.start
         or args.recheck
         or args.retry_job
         or args.revisit_gap
         or args.quota_reset_confirmed
+        or args.request_timezone
     ):
         parser.error("Request planning options apply to plan and ingest")
     url = os.environ.get("MRML_DATABASE_URL")
@@ -87,17 +97,30 @@ def main(argv: list[str] | None = None) -> int:
             revisit_gap=args.revisit_gap,
             reset_confirmed=args.quota_reset_confirmed,
         )
+        request_timezone = (
+            IGRequestTimezone(args.request_timezone, args.request_timezone_approval)
+            if args.request_timezone
+            else None
+        )
         exit_code = 0
         if args.command == "status":
             output = ingestion.status()
         elif args.command == "plan":
-            output = _describe_plan(ingestion.plan(**options))
+            plan = ingestion.plan(**options)
+            output = _describe_plan(plan, request_timezone)
             output["budget"] = asdict(ingestion.budget)
         elif args.command == "recover":
             output = {"attempt": ingestion.describe_attempt(ingestion.recover())}
         else:
             if engine.dialect.name != "postgresql":
                 raise IngestionRefused("Network ingestion requires PostgreSQL")
+            if request_timezone is None:
+                raise IngestionRefused(
+                    "IG historical ingestion requires --request-timezone "
+                    "and --request-timezone-approval"
+                )
+            if (request := ingestion.plan(**options).request) is not None:
+                request_timezone.wire_bounds(request.start, request.request_end)
             config = ProbeConfig.from_environ(load_probe_values())
             if config.epic and config.epic != args.epic:
                 raise IngestionRefused("Configured demo EPIC differs from --epic")
@@ -105,15 +128,23 @@ def main(argv: list[str] | None = None) -> int:
             def fetch(
                 epic: str, start: datetime, end: datetime, points: int
             ) -> IGPriceSample:
+                # Revalidate the actual window planned under the writer lock.
+                request_timezone.wire_bounds(start, end)
                 with IGClient(
                     config.api_key, config.username, config.password
                 ) as client:
                     client.authenticate()
-                    return client.get_h1_range(epic, start, end, point_limit=points)
+                    return client.get_h1_range(
+                        epic,
+                        start,
+                        end,
+                        point_limit=points,
+                        request_timezone=request_timezone,
+                    )
 
             plan, row = ingestion.run(fetch, **options)
             output = {
-                "plan": _describe_plan(plan),
+                "plan": _describe_plan(plan, request_timezone),
                 "attempt": ingestion.describe_attempt(row),
             }
             exit_code = int(plan.refused)
@@ -136,9 +167,18 @@ def main(argv: list[str] | None = None) -> int:
         engine.dispose()
 
 
-def _describe_plan(plan: Plan) -> dict[str, object]:
+def _describe_plan(
+    plan: Plan, request_timezone: IGRequestTimezone | None
+) -> dict[str, object]:
+    wire_bounds = None
+    if request_timezone is not None and plan.request is not None:
+        start, end = request_timezone.wire_bounds(
+            plan.request.start, plan.request.request_end
+        )
+        wire_bounds = {"timezone": request_timezone.name, "from": start, "to": end}
     return {
         **asdict(plan),
+        "wire_bounds": wire_bounds,
         "quota_visibility": "unknown" if plan.quota_remaining is None else "known",
     }
 
