@@ -20,10 +20,12 @@ class ProbeConfig:
     epic: str | None = field(repr=False)
 
     @classmethod
-    def from_environ(cls, values: Mapping[str, str | None]) -> ProbeConfig:
+    def from_environ(
+        cls, values: Mapping[str, str | None], *, read_epic: bool = True
+    ) -> ProbeConfig:
         if values.get("MRML_IG_ENVIRONMENT") != "demo":
             raise ValueError("Set MRML_IG_ENVIRONMENT=demo")
-        epic = values.get("MRML_IG_EPIC") or None
+        epic = (values.get("MRML_IG_EPIC") or None) if read_epic else None
         if epic is not None:
             validate_epic(epic)
         return cls(
