@@ -575,6 +575,13 @@ empty. Nonempty position, working-order, and activity schemas remain
 unverified against IG.
 [Broker-state audit and operator verification](audit/IG_B1_S1_READ_ONLY_BROKER_STATE.md)
 
+**B1-S3 — Broker identity and reconciliation design (submitted for review).**
+Define separate dispatch, confirmation and exposure states, scoped durable
+identity and fail-closed recovery. Proposed sequence is B1-S4 read-only
+confirmation and deterministic correlation, then storage and restart
+verification, then a separately authorized bounded IG demo open and close.
+[Lifecycle design](design/IG_B1_S3_BROKER_LIFECYCLE.md)
+
 Scope:
 
 - Retrieve account positions, working orders, activity/deal history and
