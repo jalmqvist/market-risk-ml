@@ -75,6 +75,8 @@ class JournalRepository:
                     created_at=datetime.now(UTC),
                 )
             )
+            # Insert the parent before the snapshot's foreign key is checked.
+            session.flush()
             session.add(
                 ConfigSnapshot(
                     id=str(uuid4()),

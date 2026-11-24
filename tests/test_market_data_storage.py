@@ -46,6 +46,7 @@ from mrml.data.storage_models import (
     RetrievalRow,
 )
 from mrml.journal.models import ConfigSnapshot, Run
+from mrml.journal.repository import JournalRepository, RunRecord
 
 ROOT = Path(__file__).resolve().parents[1]
 START = datetime(2026, 11, 20, 12, tzinfo=UTC)
@@ -422,6 +423,73 @@ def pg_db(monkeypatch: pytest.MonkeyPatch):
         with admin.begin() as connection:
             connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
         admin.dispose()
+
+
+def test_postgres_create_run_commits_one_snapshot(pg_db) -> None:
+    engine, config = pg_db
+    command.upgrade(config, "head")
+    repo = JournalRepository(engine)
+    first = repo.create_run(
+        run_date=START.date(),
+        mode="dry_run",
+        config_hash="original",
+        bundle_hash="bundle",
+        code_version="version",
+        config_snapshot={"original": True},
+    )
+    assert first.created
+
+    engine.dispose()
+    reopened = JournalRepository(engine)
+    duplicate = reopened.create_run(
+        run_date=START.date(),
+        mode="dry_run",
+        config_hash="duplicate",
+        bundle_hash="bundle",
+        code_version="version",
+        config_snapshot={"original": False},
+    )
+    assert duplicate == RunRecord(first.run_id, False)
+
+    with engine.connect() as connection:
+        assert connection.execute(select(Run.id, Run.config_hash)).one() == (
+            first.run_id,
+            "original",
+        )
+        assert connection.execute(
+            select(
+                ConfigSnapshot.run_id,
+                ConfigSnapshot.config_hash,
+                ConfigSnapshot.snapshot,
+            )
+        ).one() == (first.run_id, "original", {"original": True})
+
+
+def test_postgres_create_run_rolls_back_on_snapshot_insert_failure(pg_db) -> None:
+    engine, config = pg_db
+    command.upgrade(config, "head")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE config_snapshots ADD CONSTRAINT reject_test_snapshot "
+                "CHECK (config_hash <> 'reject')"
+            )
+        )
+
+    with pytest.raises(IntegrityError) as failure:
+        JournalRepository(engine).create_run(
+            run_date=START.date(),
+            mode="dry_run",
+            config_hash="reject",
+            bundle_hash="bundle",
+            code_version="version",
+            config_snapshot={"valid_json": True},
+        )
+    assert failure.value.orig.sqlstate == "23514"
+    assert failure.value.orig.diag.constraint_name == "reject_test_snapshot"
+    with engine.connect() as connection:
+        assert connection.scalar(select(func.count()).select_from(Run)) == 0
+        assert connection.scalar(select(func.count()).select_from(ConfigSnapshot)) == 0
 
 
 def test_postgres_migration_roundtrip_and_constraints(pg_db) -> None:
