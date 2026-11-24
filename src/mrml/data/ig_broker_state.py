@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
+
+from mrml.broker.evidence import (
+    AffectedDeal,
+    Confirmation,
+    Position,
+    Provenance,
+    WorkingOrder,
+)
 
 
 @dataclass(frozen=True, repr=False)
@@ -61,3 +70,72 @@ class IGActivity:
     activity_type: str | None
     channel: str | None
     actions: tuple[IGActivityAction, ...] | None
+
+
+@dataclass(frozen=True, repr=False)
+class IGAffectedDeal:
+    deal_id: str
+    status: str
+
+
+@dataclass(frozen=True, repr=False)
+class IGConfirmation:
+    deal_reference: str
+    deal_status: str
+    affected_deals: tuple[IGAffectedDeal, ...] | None
+    deal_id: str | None
+    status: str | None
+    reason: str | None
+    epic: str | None
+    direction: str | None
+    size: Decimal | None
+    level: Decimal | None
+    stop_level: Decimal | None
+    limit_level: Decimal | None
+    raw_date: str | None
+
+
+@dataclass(frozen=True, repr=False)
+class IGPositionObservation:
+    position: IGPosition
+    observed_at: datetime
+    created_date_utc: str | None
+    stop_level: Decimal | None
+    limit_level: Decimal | None
+
+
+def confirmation_evidence(row: IGConfirmation, provenance: Provenance) -> Confirmation:
+    """Map a scoped lookup to provider-neutral confirmation facts."""
+    return Confirmation(
+        provenance=provenance,
+        returned_reference=row.deal_reference,
+        outcome=row.deal_status,
+        transaction_deal_id=row.deal_id,
+        affected_deals=(
+            tuple(
+                AffectedDeal(deal.deal_id, deal.status) for deal in row.affected_deals
+            )
+            if row.affected_deals is not None
+            else None
+        ),
+        instrument=row.epic,
+        side=row.direction,
+        quantity=row.size,
+        reason=row.reason,
+        object_status=row.status,
+        definitive_rejection=row.deal_status == "REJECTED"
+        and row.reason in {"MARKET_CLOSED", "MARKET_OFFLINE", "INSTRUMENT_NOT_FOUND"},
+        level=row.level,
+        stop_level=row.stop_level,
+        limit_level=row.limit_level,
+        raw_date=row.raw_date,
+    )
+
+
+def position_evidence(row: IGPosition) -> Position:
+    """Preserve the object identity and terms independently of read coverage."""
+    return Position(row.deal_id, row.epic, row.direction, row.size, row.deal_reference)
+
+
+def working_order_evidence(row: IGWorkingOrder) -> WorkingOrder:
+    return WorkingOrder(row.deal_id, row.epic, row.deal_reference)

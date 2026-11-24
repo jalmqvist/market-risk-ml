@@ -15,6 +15,7 @@ from decimal import Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
 from http.client import HTTPConnection
 from typing import Any, Self
+from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
@@ -26,7 +27,10 @@ from mrml.data.ig_broker_state import (
     IGAccountBalance,
     IGActivity,
     IGActivityAction,
+    IGAffectedDeal,
+    IGConfirmation,
     IGPosition,
+    IGPositionObservation,
     IGWorkingOrder,
 )
 
@@ -57,6 +61,22 @@ _SESSION_ERRORS = {
 
 class IGError(RuntimeError):
     """IG diagnostic failure with a safe message."""
+
+
+class IGLookupNotFound(IGError):
+    """IG returned the documented lookup-specific not-found response."""
+
+
+class IGEvidenceConflict(IGError):
+    """Returned evidence conflicts with the requested identity."""
+
+
+class IGTransportError(IGError):
+    """IG transport failed before a usable response was available."""
+
+
+class IGMalformedResponse(IGError):
+    """The broker response failed validation."""
 
 
 class IGAuthenticationError(IGError):
@@ -423,6 +443,57 @@ class IGClient:
         except ValueError:
             raise IGError("IG returned empty or malformed account data") from None
 
+    def _verify_lookup_account(self, account_id: str) -> None:
+        _text(account_id)
+        accounts = self.get_broker_accounts()
+        if not any(row.active and row.account_id == account_id for row in accounts):
+            raise IGSessionError("IG active account does not match the intended scope")
+
+    def get_confirmation(
+        self, deal_reference: str, *, account_id: str
+    ) -> IGConfirmation:
+        validate_deal_reference(deal_reference)
+        self._verify_lookup_account(account_id)
+        payload = self._broker_request(
+            f"/confirms/{deal_reference}", 1, not_found="error.confirms.deal-not-found"
+        )
+        try:
+            evidence = _confirmation(payload)
+        except ValueError:
+            raise IGMalformedResponse(
+                "IG returned malformed confirmation data"
+            ) from None
+        if evidence.deal_reference != deal_reference:
+            raise IGEvidenceConflict("IG confirmation reference conflicts with request")
+        return evidence
+
+    def get_position(self, deal_id: str, *, account_id: str) -> IGPositionObservation:
+        validate_deal_id(deal_id)
+        self._verify_lookup_account(account_id)
+        payload = self._broker_request(
+            f"/positions/{quote(deal_id, safe='')}",
+            1,
+            not_found="error.position.notfound",
+        )
+        observed_at = datetime.now(UTC)
+        try:
+            position = _position(payload, size_field="size", level_field="level")
+            row = _object(payload.get("position"))
+            observation = IGPositionObservation(
+                position,
+                observed_at,
+                _optional_text(row.get("createdDateUTC")),
+                _optional_broker_decimal(row.get("stopLevel")),
+                _optional_broker_decimal(row.get("limitLevel")),
+            )
+        except ValueError:
+            raise IGMalformedResponse(
+                "IG returned malformed individual-position data"
+            ) from None
+        if position.deal_id != deal_id:
+            raise IGEvidenceConflict("IG position identity conflicts with request")
+        return observation
+
     def get_positions(self) -> tuple[IGPosition, ...]:
         self.get_broker_accounts()
         payload = self._broker_request("/positions", 1)
@@ -470,10 +541,20 @@ class IGClient:
             raise IGError("IG returned malformed or oversized activity data") from None
 
     def _broker_request(
-        self, path: str, version: int, *, params: dict[str, str | int] | None = None
+        self,
+        path: str,
+        version: int,
+        *,
+        params: dict[str, str | int] | None = None,
+        not_found: str | None = None,
     ) -> dict[str, Any]:
         payload, _ = self._request(
-            path, version, retry=False, broker_state=True, params=params
+            path,
+            version,
+            retry=False,
+            broker_state=True,
+            params=params,
+            not_found=not_found,
         )
         return payload
 
@@ -741,6 +822,7 @@ class IGClient:
         bounded_body: bool = False,
         broker_state: bool = False,
         params: dict[str, str | int] | None = None,
+        not_found: str | None = None,
     ) -> tuple[dict[str, Any], Response]:
         bounded_body = bounded_body or broker_state
         if not login and not self._tokens:
@@ -780,13 +862,15 @@ class IGClient:
             except RequestException:
                 response = None
             if response is None:
-                raise IGError("IG transport request failed")
+                raise IGTransportError("IG transport request failed")
 
             if status == 200 and payload is not None and "errorCode" not in payload:
                 return payload, response
 
             code = (payload or {}).get("errorCode")
             code = code if isinstance(code, str) else ""
+            if status == 404 and not_found is not None and code == not_found:
+                raise IGLookupNotFound("IG lookup evidence is unavailable")
             quota = _QUOTA_ERRORS.get(code.removeprefix(_QUOTA_PREFIX))
             if code.startswith(_QUOTA_PREFIX) and quota is not None:
                 raise IGQuotaError(
@@ -827,7 +911,9 @@ class IGClient:
                 )
             if status == 200:
                 if broker_state:
-                    raise IGError("IG returned a malformed broker-state response")
+                    raise IGMalformedResponse(
+                        "IG returned a malformed broker-state response"
+                    )
                 if bounded_body:
                     raise IGMarketError("IG returned a malformed historical response")
                 raise IGError("IG returned an unexpected response")
@@ -899,7 +985,47 @@ def _account_balances(value: Any) -> IGAccountBalance | None:
     )
 
 
-def _position(value: Any) -> IGPosition:
+def validate_deal_reference(value: str) -> None:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,30}", value):
+        raise ValueError("Invalid IG deal reference")
+
+
+def validate_deal_id(value: str) -> None:
+    # Conservative path segment policy; the IG identifier itself is opaque.
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value):
+        raise ValueError("Invalid IG deal ID")
+
+
+def _confirmation(payload: dict[str, Any]) -> IGConfirmation:
+    affected = None
+    if payload.get("affectedDeals") is not None:
+        affected = tuple(
+            IGAffectedDeal(_text(item.get("dealId")), _broker_enum(item.get("status")))
+            for item in map(_object, _broker_rows(payload, "affectedDeals"))
+        )
+    status = _broker_enum(payload.get("dealStatus"))
+    if status not in {"ACCEPTED", "REJECTED"}:
+        raise ValueError("Unknown confirmation outcome")
+    return IGConfirmation(
+        deal_reference=_text(payload.get("dealReference")),
+        deal_status=status,
+        affected_deals=affected,
+        deal_id=_optional_text(payload.get("dealId")),
+        status=_optional_broker_enum(payload.get("status")),
+        reason=_optional_broker_enum(payload.get("reason")),
+        epic=_optional_text(payload.get("epic")),
+        direction=_optional_broker_enum(payload.get("direction")),
+        size=_optional_broker_decimal(payload.get("size")),
+        level=_optional_broker_decimal(payload.get("level")),
+        stop_level=_optional_broker_decimal(payload.get("stopLevel")),
+        limit_level=_optional_broker_decimal(payload.get("limitLevel")),
+        raw_date=_optional_text(payload.get("date")),
+    )
+
+
+def _position(
+    value: Any, *, size_field: str = "dealSize", level_field: str = "openLevel"
+) -> IGPosition:
     row = _object(value)
     market = _object(row.get("market"))
     position = _object(row.get("position"))
@@ -907,10 +1033,10 @@ def _position(value: Any) -> IGPosition:
         deal_id=_text(position.get("dealId")),
         epic=_text(market.get("epic")),
         direction=_broker_enum(position.get("direction")),
-        size=_broker_decimal(position.get("dealSize")),
+        size=_broker_decimal(position.get(size_field)),
         deal_reference=_optional_text(position.get("dealReference")),
         status=_optional_broker_enum(position.get("status")),
-        open_level=_optional_broker_decimal(position.get("openLevel")),
+        open_level=_optional_broker_decimal(position.get(level_field)),
         created_date=_optional_text(position.get("createdDate")),
     )
 
