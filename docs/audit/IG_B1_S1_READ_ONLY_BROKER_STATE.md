@@ -2,8 +2,8 @@
 
 B1-S1 adds typed broker-state reads and an offline-tested operator diagnostic.
 The scope is IG demo and uses the existing login, transport and session tokens.
-Broker-state checks have used synthetic fixtures. Operator verification on the
-demo account is pending.
+The B1-S1 implementation passed offline tests. B1-S2 bounded operator
+verification also passed against the tested IG demo configuration.
 
 ## Wire contracts
 
@@ -16,7 +16,8 @@ demo account is pending.
 
 The working-orders page labels the route `/working-orders`. The adapter pins
 the requested gateway route `/workingorders`, which the established Python
-client also uses. Route spelling remains a point for demo verification.
+client also uses. The operator confirmed that `/workingorders` v2 was
+accepted for the tested demo configuration.
 [Python client](https://github.com/ig-python/trading-ig/blob/master/trading_ig/rest.py)
 
 Account IDs, EPICs, deal IDs, deal references and activity identifiers retain
@@ -65,30 +66,23 @@ Record statuses remain absent when IG supplies only a market status.
   checks and omits identifiers, amounts, credentials, timestamp labels and
   raw payloads.
 
-## Proposed operator verification
+## B1-S2 operator verification
 
-After review and separate authorization, use a known IG demo account in the
-portal and verify which account is active. Set `MRML_IG_ENVIRONMENT=demo` and
-provide the existing IG authentication variables through the environment
-or the local ignored `.env`. Review a short past UTC activity window using
-existing activity visible in the portal. Run only the diagnostics needed
-for the comparison.
+The operator reported these results from the credentialed, read-only IG demo
+diagnostic on 2026-11-24. The operator independently confirmed that three
+accounts exist and there are no open trades. No broker mutations occurred.
 
-```bash
-python -m mrml.data.ig_broker_probe accounts
-python -m mrml.data.ig_broker_probe positions
-python -m mrml.data.ig_broker_probe working-orders
-python -m mrml.data.ig_broker_probe activity --from "$REVIEWED_UTC_START" --to "$REVIEWED_UTC_END"
-```
+| Request | Result | Observed response |
+| --- | --- | --- |
+| `GET /accounts` v1 | PASS | Three accounts, active account verified, all three with balances. |
+| `GET /positions` v1 | PASS | Valid empty collection, zero positions. |
+| `GET /workingorders` v2 | PASS | Gateway route accepted, valid empty collection, zero working orders. |
+| `GET /history/activity` v3 | PASS | Explicit bounds `2026-11-23T09:00:00Z` through `2026-11-23T10:00:00Z` accepted, valid empty terminal page, zero activities. |
 
-Set both activity variables using `YYYY-MM-DDTHH:MM:SSZ`. Compare counts with the
-demo portal for the same account. Check whether the v2 working-order route
-and v3 explicit UTC bounds are accepted and whether known events near the
-activity boundaries are counted as expected. Record only aggregate counts,
-redacted outcomes and whether pagination refused the selected window.
-If the portal cannot confirm time interpretation from existing activity,
-record the uncertainty. The CLI does not switch accounts or create
-broker activity to populate a diagnostic.
+The empty activity page leaves broker interpretation of the UTC bounds,
+boundary inclusion, and historical completeness unverified. Nonempty
+position, working-order, and activity schemas have synthetic fixture
+coverage only and remain unverified against IG.
 
 ## Verification evidence
 
