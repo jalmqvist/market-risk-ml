@@ -582,6 +582,11 @@ confirmation and deterministic correlation, then storage and restart
 verification, then a separately authorized bounded IG demo open and close.
 [Lifecycle design](design/IG_B1_S3_BROKER_LIFECYCLE.md)
 
+**B1-S4 — Read-only confirmation and evidence correlation (offline verified).**
+Scoped confirmation and individual-position lookups and pure opening-intent
+assessment are ready for review. Broker verification remains pending.
+[Confirmation and correlation audit](audit/IG_B1_S4_CONFIRMATION_CORRELATION.md)
+
 Scope:
 
 - Retrieve account positions, working orders, activity/deal history and
