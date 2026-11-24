@@ -563,6 +563,10 @@ MRML's provider boundary. The source-only acceptance evidence is in
 **Purpose:** demonstrate the complete demo position lifecycle independently
 of any strategy or recommendation provider.
 
+**B0 — Operational journal readiness (started 2026-11-24).** Verify atomic
+run and config snapshot creation on PostgreSQL before broker-state retrieval
+and order management. [B0 audit](audit/OPERATIONAL_JOURNAL_B0.md)
+
 Scope:
 
 - Retrieve account positions, working orders, activity/deal history and
