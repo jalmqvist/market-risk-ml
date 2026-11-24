@@ -45,7 +45,13 @@ Unsupported affected-deal sets remain unresolved.
 Exposure assessment requires complete position and working-order reads
 within the caller's positive maximum age and from the intended scope.
 Each read has its own aware timestamp; future, stale and incomplete
-exposure reads cannot establish a match. A complete individual lookup
+exposure reads cannot establish a match. A position read must also be
+observed strictly after at least one equivalent confirmation observation.
+Callers must supply independently recorded, comparable observation times.
+Earlier or equal position timestamps, or unusable confirmation timestamps,
+leave ordering unresolved (`POSITION_OBSERVATION_ORDER_UNVERIFIED`).
+This orders evidence collection only. REST observation time does not
+establish execution time, and raw broker date labels are kept verbatim. A complete individual lookup
 covers only its requested ID. Its absence after an accepted opening
 produces a discrepancy and says nothing about historical execution.
 

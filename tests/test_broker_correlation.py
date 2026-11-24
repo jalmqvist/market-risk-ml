@@ -52,7 +52,9 @@ REJECTED = replace(
     definitive_rejection=True,
 )
 POSITION = Position("opened-deal", "EPIC", "BUY", INTENT.quantity)
-POSITIONS = PositionRead(provenance("positions"), True, (POSITION,))
+POSITIONS = PositionRead(
+    replace(provenance("positions"), observed_at=NOW), True, (POSITION,)
+)
 ORDERS = WorkingOrderRead(provenance("orders"), True, ())
 ACK = Acknowledgement(provenance("ack"), "Ref-1")
 ACTIVITY = ActivityOpening(provenance("activity"), "Ref-1", "opened-deal")
@@ -310,3 +312,44 @@ def test_conflicting_affected_deal_multiplicity_cannot_depend_on_input_order():
     right = assess(replace(BASE, confirmations=(CONFIRMATION, duplicated)))
     assert left == right
     assert left.reason == "CONFLICTING_CONFIRMATIONS"
+
+
+@pytest.mark.parametrize(
+    "confirmation_observed_at",
+    (NOW + timedelta(microseconds=1), NOW, NOW.replace(tzinfo=None)),
+    ids=(
+        "position-predates-confirmation",
+        "equal-observation-time",
+        "naive-confirmation",
+    ),
+)
+def test_matching_position_requires_ordered_confirmation_observation(
+    confirmation_observed_at,
+):
+    confirmation = replace(
+        CONFIRMATION,
+        provenance=replace(
+            CONFIRMATION.provenance, observed_at=confirmation_observed_at
+        ),
+        raw_date="2026-11-23T00:00:00Z",
+    )
+    # Keep both observations within the evaluation interval.
+    result = correlate_opening(
+        INTENT,
+        replace(BASE, confirmations=(confirmation,)),
+        now=NOW + timedelta(seconds=1),
+        max_age=AGE,
+    )
+    assert result.status == "UNRESOLVED"
+    assert result.reason == "POSITION_OBSERVATION_ORDER_UNVERIFIED"
+    assert result.confirmation_outcome == "ACCEPTED"
+
+
+def test_later_equivalent_confirmation_does_not_invalidate_earlier_observation():
+    duplicate = replace(
+        CONFIRMATION, provenance=replace(provenance("duplicate"), observed_at=NOW)
+    )
+    assert (
+        assess(replace(BASE, confirmations=(duplicate, CONFIRMATION))).status
+        == "MATCHED"
+    )

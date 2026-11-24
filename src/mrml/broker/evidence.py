@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 
@@ -273,6 +273,15 @@ def correlate_opening(
         for row in orders.orders
     ):
         return result(mismatch, "CONTINGENT_EXPOSURE")
+    # An equivalent confirmation must have been observed before this read.
+    # Observation timestamps order evidence collection, not broker execution.
+    position_observed_at = positions.provenance.observed_at.astimezone(UTC)
+    if not any(
+        row.provenance.observed_at.utcoffset() is not None
+        and row.provenance.observed_at.astimezone(UTC) < position_observed_at
+        for row in evidence.confirmations
+    ):
+        return result(unresolved, "POSITION_OBSERVATION_ORDER_UNVERIFIED")
     matches = [row for row in positions.positions if row.deal_id == deal_id]
     if len(matches) != 1:
         return result(
