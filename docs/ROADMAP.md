@@ -567,6 +567,14 @@ of any strategy or recommendation provider.
 run and config snapshot creation on PostgreSQL before broker-state retrieval
 and order management. [B0 audit](audit/OPERATIONAL_JOURNAL_B0.md)
 
+**B1-S1 — Read-only IG demo broker-state contracts (passed 2026-11-24).**
+The implementation and B1-S2 bounded operator verification passed. IG demo
+returned three accounts with balances and verified the active account. The
+position and working-order collections and the bounded activity page were
+empty. Nonempty position, working-order, and activity schemas remain
+unverified against IG.
+[Broker-state audit and operator verification](audit/IG_B1_S1_READ_ONLY_BROKER_STATE.md)
+
 Scope:
 
 - Retrieve account positions, working orders, activity/deal history and

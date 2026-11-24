@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
 from http.client import HTTPConnection
 from typing import Any, Self
@@ -21,12 +22,23 @@ from requests import Response, Session
 from requests.exceptions import RequestException
 from requests.structures import CaseInsensitiveDict
 
+from mrml.data.ig_broker_state import (
+    IGAccountBalance,
+    IGActivity,
+    IGActivityAction,
+    IGPosition,
+    IGWorkingOrder,
+)
+
 DEMO_GATEWAY = "https://demo-api.ig.com/gateway/deal"
 SAMPLE_SIZE = 32
 _SEARCH_PAGE_SIZE = 50
 RESOLUTION = "HOUR"
 MAX_RANGE_INTERVALS = 24
 _MAX_RANGE_BYTES = 262_144
+MAX_BROKER_STATE_ROWS = 100
+MAX_ACTIVITY_WINDOW = timedelta(hours=24)
+ACTIVITY_PAGE_SIZE = 50
 
 _QUOTA_PREFIX = "error.public-api."
 _QUOTA_ERRORS = {
@@ -130,6 +142,8 @@ class IGAccount:
     currency: str | None
     account_type: str | None
     status: str | None
+    balances: IGAccountBalance | None = field(default=None, repr=False)
+    active: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -267,16 +281,22 @@ def _retry_at(value: str | None) -> datetime | None:
         return None
 
 
-def _bounded_json(response: Response) -> dict[str, Any] | None:
+def _bounded_json(
+    response: Response, *, broker_state: bool = False
+) -> dict[str, Any] | None:
     with response:
         data = bytearray()
         for chunk in response.iter_content(chunk_size=8192):
             data.extend(chunk)
             if len(data) > _MAX_RANGE_BYTES:
+                if broker_state:
+                    raise IGError("IG broker-state response exceeds the byte budget")
                 raise IGMarketError("IG historical response exceeds the byte budget")
         try:
-            return _object(json.loads(data))
-        except (ValueError, RecursionError):
+            return _object(
+                json.loads(data, parse_float=Decimal if broker_state else None)
+            )
+        except (ValueError, RecursionError, InvalidOperation):
             return None
 
 
@@ -304,6 +324,7 @@ class IGClient:
         self._api_key = api_key
         self._login = {"identifier": username, "password": password}
         self._tokens: dict[str, str] = {}
+        self._active_account_id: str | None = None
         self._login_timezone_offset_hours: int | float | None = None
         self._session = requests.Session() if session is None else session
         self._owns_session = session is None
@@ -316,14 +337,18 @@ class IGClient:
 
     def __exit__(self, *_: object) -> None:
         self._tokens.clear()
+        self._active_account_id = None
         if self._owns_session:
             self._session.cookies.clear()
             self._session.close()
 
-    def authenticate(self) -> None:
+    def authenticate(self, *, bounded: bool = False) -> None:
         self._tokens.clear()
+        self._active_account_id = None
         self._login_timezone_offset_hours = None
-        payload, response = self._request("/session", 2, login=True)
+        payload, response = self._request(
+            "/session", 2, login=True, broker_state=bounded
+        )
         headers = CaseInsensitiveDict(response.headers)
         tokens = {name: headers.get(name, "") for name in ("CST", "X-SECURITY-TOKEN")}
         if not all(_header(value) for value in tokens.values()):
@@ -335,7 +360,10 @@ class IGClient:
             if not isinstance(value, str) or not value.strip():
                 raise IGAuthenticationError("IG returned malformed login data")
         self._tokens = tokens
+        self._active_account_id = payload["currentAccountId"]
         offset = payload.get("timezoneOffset")
+        if isinstance(offset, Decimal) and offset.is_finite():
+            offset = float(offset)
         if (
             isinstance(offset, (int, float))
             and not isinstance(offset, bool)
@@ -344,20 +372,47 @@ class IGClient:
             self._login_timezone_offset_hours = offset
 
     def get_accounts(self) -> tuple[IGAccount, ...]:
+        """Return the account discovery fields used by the connectivity probe."""
         payload, _ = self._request("/accounts", 1)
+        return self._parse_accounts(payload, broker_state=False)
+
+    def get_broker_accounts(self) -> tuple[IGAccount, ...]:
+        """Return bounded account state and identify the enabled login account."""
+        payload = self._broker_request("/accounts", 1)
+        accounts = self._parse_accounts(payload, broker_state=True)
+        if not any(row.active and row.status == "ENABLED" for row in accounts):
+            raise IGSessionError("IG login account is missing or is not enabled")
+        return accounts
+
+    def _parse_accounts(
+        self, payload: dict[str, Any], *, broker_state: bool
+    ) -> tuple[IGAccount, ...]:
         try:
+            rows = (
+                _broker_rows(payload, "accounts")
+                if broker_state
+                else _array(payload.get("accounts"))
+            )
             accounts = []
-            for row in _array(payload.get("accounts")):
+            for row in rows:
                 item = _object(row)
                 currency = _optional_text(item.get("currency"))
                 if currency is not None and not re.fullmatch(r"[A-Z]{3}", currency):
                     raise ValueError("Invalid currency")
+                account_id = _text(item.get("accountId"))
+                enum = _optional_broker_enum if broker_state else _optional_text
                 accounts.append(
                     IGAccount(
-                        _text(item.get("accountId")),
+                        account_id,
                         currency,
-                        _optional_text(item.get("accountType")),
-                        _optional_text(item.get("status")),
+                        enum(item.get("accountType")),
+                        enum(item.get("status")),
+                        _account_balances(item.get("balance"))
+                        if broker_state
+                        else None,
+                        active=(account_id == self._active_account_id)
+                        if broker_state
+                        else None,
                     )
                 )
             if not accounts or len({item.account_id for item in accounts}) != len(
@@ -367,6 +422,60 @@ class IGClient:
             return tuple(accounts)
         except ValueError:
             raise IGError("IG returned empty or malformed account data") from None
+
+    def get_positions(self) -> tuple[IGPosition, ...]:
+        self.get_broker_accounts()
+        payload = self._broker_request("/positions", 1)
+        try:
+            return tuple(_position(row) for row in _broker_rows(payload, "positions"))
+        except ValueError:
+            raise IGError("IG returned malformed position data") from None
+
+    def get_working_orders(self) -> tuple[IGWorkingOrder, ...]:
+        self.get_broker_accounts()
+        payload = self._broker_request("/workingorders", 2)
+        try:
+            return tuple(
+                _working_order(row) for row in _broker_rows(payload, "workingOrders")
+            )
+        except ValueError:
+            raise IGError("IG returned malformed working-order data") from None
+
+    def get_activity(self, start: datetime, end: datetime) -> tuple[IGActivity, ...]:
+        validate_activity_window(start, end)
+        self.get_broker_accounts()
+        payload = self._broker_request(
+            "/history/activity",
+            3,
+            params={
+                "from": start.isoformat(timespec="seconds").removesuffix("+00:00")
+                + "Z",
+                "to": end.isoformat(timespec="seconds").removesuffix("+00:00") + "Z",
+                "detailed": "true",
+                "pageSize": ACTIVITY_PAGE_SIZE,
+            },
+        )
+        try:
+            rows = _broker_rows(payload, "activities", limit=ACTIVITY_PAGE_SIZE)
+            paging = _object(_object(payload.get("metadata")).get("paging"))
+            size = _nonnegative_integer(paging.get("size"))
+            next_page = paging["next"]
+            if next_page is not None:
+                _text(next_page)
+                raise IGError("IG activity exceeds one page; narrow the UTC window")
+            if not len(rows) <= size <= ACTIVITY_PAGE_SIZE:
+                raise ValueError("Invalid activity page size")
+            return tuple(_activity(row) for row in rows)
+        except (ValueError, KeyError):
+            raise IGError("IG returned malformed or oversized activity data") from None
+
+    def _broker_request(
+        self, path: str, version: int, *, params: dict[str, str | int] | None = None
+    ) -> dict[str, Any]:
+        payload, _ = self._request(
+            path, version, retry=False, broker_state=True, params=params
+        )
+        return payload
 
     def find_market(self, epic: str | None = None) -> IGMarket:
         if epic is not None:
@@ -630,8 +739,10 @@ class IGClient:
         login: bool = False,
         retry: bool = True,
         bounded_body: bool = False,
+        broker_state: bool = False,
         params: dict[str, str | int] | None = None,
     ) -> tuple[dict[str, Any], Response]:
+        bounded_body = bounded_body or broker_state
         if not login and not self._tokens:
             raise IGSessionError("IG session is unavailable; authenticate explicitly")
         if HTTPConnection.debuglevel:
@@ -662,7 +773,9 @@ class IGClient:
                             response.close()
                         raise IGError("IG returned an unexpected redirect")
                     payload = (
-                        _bounded_json(response) if bounded_body else _json(response)
+                        _bounded_json(response, broker_state=broker_state)
+                        if bounded_body
+                        else _json(response)
                     )
             except RequestException:
                 response = None
@@ -685,6 +798,7 @@ class IGClient:
                 raise IGAuthenticationError("IG rejected the demo API key")
             if not login and (code in _SESSION_ERRORS or status == 401):
                 self._tokens.clear()
+                self._active_account_id = None
                 raise IGSessionError("IG rejected the session or it expired")
             if login and (
                 status in (400, 401, 403)
@@ -712,11 +826,148 @@ class IGClient:
                     "IG market or historical data unavailable or access denied"
                 )
             if status == 200:
+                if broker_state:
+                    raise IGError("IG returned a malformed broker-state response")
                 if bounded_body:
                     raise IGMarketError("IG returned a malformed historical response")
                 raise IGError("IG returned an unexpected response")
             raise IGError(f"IG request failed (HTTP {status})")
         raise AssertionError("IG retry loop exhausted")
+
+
+def validate_activity_window(start: datetime, end: datetime) -> None:
+    if (
+        any(
+            value.utcoffset() != timedelta(0) or value.microsecond
+            for value in (start, end)
+        )
+        or not timedelta(0) < end - start <= MAX_ACTIVITY_WINDOW
+    ):
+        raise ValueError("IG activity needs whole-second UTC bounds within 24 hours")
+
+
+def _broker_rows(
+    payload: dict[str, Any], key: str, *, limit: int = MAX_BROKER_STATE_ROWS
+) -> list[Any]:
+    rows = _array(payload.get(key))
+    if len(rows) > limit:
+        raise ValueError("Collection exceeds the row budget")
+    return rows
+
+
+def _broker_enum(value: Any) -> str:
+    token = _text(value)
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", token):
+        raise ValueError("Invalid broker enum")
+    return token
+
+
+def _optional_broker_enum(value: Any) -> str | None:
+    return None if value is None else _broker_enum(value)
+
+
+def _broker_decimal(value: Any) -> Decimal:
+    if isinstance(value, (int, Decimal)) and not isinstance(value, bool):
+        number = Decimal(value)
+    elif isinstance(value, str) and re.fullmatch(
+        r"[+-]?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?", value
+    ):
+        try:
+            number = Decimal(value)
+        except InvalidOperation:
+            raise ValueError("Invalid decimal") from None
+    else:
+        raise ValueError("Expected a decimal number")
+    if not number.is_finite():
+        raise ValueError("Expected a finite decimal number")
+    return number
+
+
+def _optional_broker_decimal(value: Any) -> Decimal | None:
+    return None if value is None else _broker_decimal(value)
+
+
+def _account_balances(value: Any) -> IGAccountBalance | None:
+    if value is None:
+        return None
+    amounts = _object(value)
+    return IGAccountBalance(
+        balance=_optional_broker_decimal(amounts.get("balance")),
+        available=_optional_broker_decimal(amounts.get("available")),
+        deposit=_optional_broker_decimal(amounts.get("deposit")),
+        profit_loss=_optional_broker_decimal(amounts.get("profitLoss")),
+    )
+
+
+def _position(value: Any) -> IGPosition:
+    row = _object(value)
+    market = _object(row.get("market"))
+    position = _object(row.get("position"))
+    return IGPosition(
+        deal_id=_text(position.get("dealId")),
+        epic=_text(market.get("epic")),
+        direction=_broker_enum(position.get("direction")),
+        size=_broker_decimal(position.get("dealSize")),
+        deal_reference=_optional_text(position.get("dealReference")),
+        status=_optional_broker_enum(position.get("status")),
+        open_level=_optional_broker_decimal(position.get("openLevel")),
+        created_date=_optional_text(position.get("createdDate")),
+    )
+
+
+def _working_order(value: Any) -> IGWorkingOrder:
+    row = _object(value)
+    order = _object(row.get("workingOrderData"))
+    epic = _text(order.get("epic"))
+    if row.get("marketData") is not None:
+        market_epic = _optional_text(_object(row["marketData"]).get("epic"))
+        if market_epic is not None and market_epic != epic:
+            raise ValueError("Conflicting instrument identifiers")
+    return IGWorkingOrder(
+        deal_id=_text(order.get("dealId")),
+        epic=epic,
+        direction=_broker_enum(order.get("direction")),
+        size=_broker_decimal(order.get("orderSize")),
+        deal_reference=_optional_text(order.get("dealReference")),
+        status=_optional_broker_enum(order.get("status")),
+        order_type=_optional_broker_enum(order.get("orderType")),
+        time_in_force=_optional_broker_enum(order.get("timeInForce")),
+        order_level=_optional_broker_decimal(order.get("orderLevel")),
+        created_date=_optional_text(order.get("createdDate")),
+        created_date_utc=_optional_text(order.get("createdDateUTC")),
+        good_till_date=_optional_text(order.get("goodTillDate")),
+    )
+
+
+def _activity(value: Any) -> IGActivity:
+    item = _object(value)
+    details = {} if item.get("details") is None else _object(item["details"])
+    activity_id = _optional_text(item.get("activityId"))
+    history_id = _optional_text(item.get("activityHistoryId"))
+    if activity_id is not None and history_id is not None and activity_id != history_id:
+        raise ValueError("Conflicting activity identifiers")
+    actions = None
+    if details.get("actions") is not None:
+        actions = tuple(
+            IGActivityAction(
+                affected_deal_id=_text(action.get("affectedDealId")),
+                action_type=_broker_enum(action.get("actionType")),
+            )
+            for action in map(_object, _broker_rows(details, "actions"))
+        )
+    return IGActivity(
+        raw_date=_text(item.get("date")),
+        deal_id=_optional_text(item.get("dealId")),
+        epic=_optional_text(item.get("epic")),
+        activity_id=activity_id or history_id,
+        deal_reference=_optional_text(details.get("dealReference")),
+        direction=_optional_broker_enum(details.get("direction")),
+        size=_optional_broker_decimal(details.get("size")),
+        status=_optional_broker_enum(item.get("status")),
+        activity_type=_optional_broker_enum(item.get("type")),
+        channel=_optional_broker_enum(item.get("channel")),
+        actions=actions,
+    )
 
 
 def _quote(item: Any) -> IGQuote:
