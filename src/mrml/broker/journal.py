@@ -469,7 +469,7 @@ class ExecutionJournal:
             for row in session.scalars(
                 select(ClaimRow)
                 .where(ClaimRow.scope_id == account_id)
-                .order_by(ClaimRow.claimed_at, ClaimRow.id)
+                .order_by(ClaimRow.claim_number)
             )
         )
 
@@ -482,7 +482,7 @@ class ExecutionJournal:
             claim = session.scalar(
                 select(ClaimRow)
                 .where(ClaimRow.scope_id == account.id)
-                .order_by(ClaimRow.claimed_at, ClaimRow.id)
+                .order_by(ClaimRow.claim_number)
                 .limit(1)
             )
             return _claim(claim, scope) if claim is not None else None

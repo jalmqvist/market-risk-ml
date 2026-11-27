@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from threading import Barrier
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
@@ -778,28 +778,9 @@ def test_postgres_populated_0007_upgrade_and_unrepresentable_downgrade(pg_db):  
     command.upgrade(config, "head")
     assert gate.recover_gate(ACCOUNT, at=at) == state
 
-    # Model future data using fixture-owner DDL. Normal writers cannot insert it.
     successor = closing(gate)
     identity = uuid4()
-    with engine.begin() as connection:
-        connection.exec_driver_sql(
-            "ALTER TABLE execution_claims DISABLE TRIGGER "
-            "broker_claim_successive_admission"
-        )
-        connection.execute(db_event(scope, successor.id, event_id=identity))
-        connection.execute(
-            insert(ClaimRow).values(
-                id=identity,
-                scope_id=scope,
-                intent_id=successor.id,
-                claim_number=2,
-                claimed_at=at,
-            )
-        )
-        connection.exec_driver_sql(
-            "ALTER TABLE execution_claims ENABLE TRIGGER "
-            "broker_claim_successive_admission"
-        )
+    _seed_successor_claim(engine, scope, successor.id, identity, at)
     recovered = GateJournal(engine).recover_gate(ACCOUNT, at=at)
     assert recovered.claims[0] == claim and recovered.latest_claim.id == identity
     assert recovered.outstanding_claims == (recovered.latest_claim,)
@@ -809,6 +790,53 @@ def test_postgres_populated_0007_upgrade_and_unrepresentable_downgrade(pg_db):  
         gate.claim_dispatch(ACCOUNT, successor.id)
     with pytest.raises(RuntimeError, match="cannot represent successive claim history"):
         command.downgrade(config, "0007_account_gate")
+
+
+def _seed_successor_claim(engine, scope, intent_id, identity, claimed_at):
+    # Model future data using fixture-owner DDL. Normal writers cannot insert it.
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "ALTER TABLE execution_claims DISABLE TRIGGER "
+            "broker_claim_successive_admission"
+        )
+        connection.execute(db_event(scope, intent_id, event_id=identity))
+        connection.execute(
+            insert(ClaimRow).values(
+                id=identity,
+                scope_id=scope,
+                intent_id=intent_id,
+                claim_number=2,
+                claimed_at=claimed_at,
+            )
+        )
+        connection.exec_driver_sql(
+            "ALTER TABLE execution_claims ENABLE TRIGGER "
+            "broker_claim_successive_admission"
+        )
+
+
+@pytest.mark.parametrize("offset", [-SECOND, timedelta(0)])
+def test_postgres_claim_number_controls_history_and_hold(gate_pg, offset):
+    gate, engine, _ = gate_pg
+    first = new_claim(gate)
+    second_intent = closing(gate)
+    second_id = UUID(int=0)
+    with engine.connect() as connection:
+        scope = connection.scalar(
+            select(IntentRow.scope_id).where(IntentRow.id == first.intent_id)
+        )
+    _seed_successor_claim(
+        engine, scope, second_intent.id, second_id, first.claimed_at + offset
+    )
+
+    reopened = GateJournal(engine)
+    claims = reopened.claim_history(ACCOUNT)
+    assert tuple(claim.id for claim in claims) == (first.id, second_id)
+    state = reopened.recover_gate(ACCOUNT, at=first.claimed_at + SECOND)
+    assert state.claims == state.outstanding_claims == claims
+    assert state.latest_claim == claims[1]
+    assert reopened.account_hold(ACCOUNT) == first
+    assert reopened.recover_unresolved(ACCOUNT) == (first,)
 
 
 def test_postgres_0008_refuses_ambiguous_version_0007_accounts(pg_db):  # noqa: F811
