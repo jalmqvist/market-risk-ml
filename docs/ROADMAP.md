@@ -575,16 +575,17 @@ empty. Nonempty position, working-order, and activity schemas remain
 unverified against IG.
 [Broker-state audit and operator verification](audit/IG_B1_S1_READ_ONLY_BROKER_STATE.md)
 
-**B1-S3 — Broker identity and reconciliation design (submitted for review).**
-Define separate dispatch, confirmation and exposure states, scoped durable
-identity and fail-closed recovery. Proposed sequence is B1-S4 read-only
-confirmation and deterministic correlation, then storage and restart
-verification, then a separately authorized bounded IG demo open and close.
+**B1-S3 — Broker identity and reconciliation design (merged).**
+Established separate dispatch, confirmation and exposure states, scoped durable
+identity and fail-closed recovery. The design precedes read-only confirmation,
+execution-journal storage and restart verification, and separately authorized
+bounded IG demo opening and closing.
 [Lifecycle design](design/IG_B1_S3_BROKER_LIFECYCLE.md)
 
-**B1-S4 — Read-only confirmation and evidence correlation (offline verified).**
+**B1-S4 — Read-only confirmation and evidence correlation (merged; offline verified).**
 Scoped confirmation and individual-position lookups and pure opening-intent
-assessment are ready for review. Broker verification remains pending.
+assessment passed offline verification. Credentialed verification of these
+lookups and nonempty broker responses remains pending.
 [Confirmation and correlation audit](audit/IG_B1_S4_CONFIRMATION_CORRELATION.md)
 
 Scope:
