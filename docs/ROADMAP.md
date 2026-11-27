@@ -622,9 +622,11 @@ support.
   PostgreSQL still admits only the first preparatory opening claim. Closing
   preparation binds a separate intent to the verified affected deal and
   fresh complete exposure. [Successive claims audit](audit/MRML_B2_S4A_SUCCESSIVE_CLAIMS.md)
-- **B2-S4B — Verified dispatch admission (pending).** Complete the
-  pre-execution checks and enforce admission before enabling successor
-  claims or proceeding to B3.
+- **B2-S4B — Pre-execution evaluation (offline implemented; operational
+  admission pending).** Exact intent, exposure, dealing rules, risk and
+  authorization terms can be checked against offline fixtures. Authenticated
+  broker and operator evidence and atomic successor admission remain prerequisites
+  for B3. [Pre-execution admission audit](audit/MRML_B2_S4B_PRE_EXECUTION_ADMISSION.md)
 
 **B3 — First controlled IG demo opening (planned; not authorized).**
 After B2-S4 readiness passes, implement and separately authorize one bounded,
