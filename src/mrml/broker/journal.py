@@ -301,20 +301,7 @@ class ExecutionJournal:
         payload = _canonical(request)
         fingerprint = hashlib.sha256(_json(payload).encode()).hexdigest()
         with self._transaction() as session:
-            session.execute(
-                insert(AccountRow)
-                .values(
-                    id=uuid4(),
-                    provider=scope.provider,
-                    environment=scope.environment,
-                    account_id=scope.account_id,
-                )
-                .on_conflict_do_nothing(
-                    index_elements=["provider", "environment", "account_id"]
-                )
-            )
-            account = self._account(session, scope, lock=True)
-            assert account is not None
+            account = self._ensure_account(session, scope)
             existing = session.scalar(
                 select(IntentRow).where(
                     IntentRow.scope_id == account.id,
@@ -507,6 +494,24 @@ class ExecutionJournal:
             raise JournalStorageError("Execution journal transaction failed") from None
         except SQLAlchemyError:
             raise JournalStorageError("Execution journal transaction failed") from None
+
+    def _ensure_account(self, session: Session, scope: Scope) -> AccountRow:
+        _validate_scope(scope)
+        session.execute(
+            insert(AccountRow)
+            .values(
+                id=uuid4(),
+                provider=scope.provider,
+                environment=scope.environment,
+                account_id=scope.account_id,
+            )
+            .on_conflict_do_nothing(
+                index_elements=["provider", "environment", "account_id"]
+            )
+        )
+        account = self._account(session, scope, lock=True)
+        assert account is not None
+        return account
 
     @staticmethod
     def _account(

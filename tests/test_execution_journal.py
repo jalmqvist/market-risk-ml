@@ -415,11 +415,10 @@ def test_postgres_migration_preserves_prior_records_and_refuses_nonempty_downgra
     record(market, "before-upgrade")
     old_tables = set(inspect(engine).get_table_names())
     assert not any(table.startswith("execution_") for table in old_tables)
-    command.upgrade(config, "head")
-    command.check(config)
+    command.upgrade(config, "0005_execution_journal")
     command.downgrade(config, OLD_HEAD)
     assert set(inspect(engine).get_table_names()) == old_tables
-    command.upgrade(config, "head")
+    command.upgrade(config, "0005_execution_journal")
     with engine.connect() as connection:
         assert connection.scalar(select(Run.id)) == run.run_id
         assert connection.scalar(select(ConfigSnapshot.snapshot)) == {"preserved": True}

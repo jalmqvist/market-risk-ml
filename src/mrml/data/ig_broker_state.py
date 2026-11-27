@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
 
@@ -134,8 +134,39 @@ def confirmation_evidence(row: IGConfirmation, provenance: Provenance) -> Confir
 
 def position_evidence(row: IGPosition) -> Position:
     """Preserve the object identity and terms independently of read coverage."""
-    return Position(row.deal_id, row.epic, row.direction, row.size, row.deal_reference)
+    return Position(
+        row.deal_id,
+        row.epic,
+        row.direction,
+        row.size,
+        row.deal_reference,
+        status=row.status,
+        open_level=row.open_level,
+        created_date=row.created_date,
+    )
+
+
+def individual_position_evidence(row: IGPositionObservation) -> Position:
+    return replace(
+        position_evidence(row.position),
+        created_date_utc=row.created_date_utc,
+        stop_level=row.stop_level,
+        limit_level=row.limit_level,
+    )
 
 
 def working_order_evidence(row: IGWorkingOrder) -> WorkingOrder:
-    return WorkingOrder(row.deal_id, row.epic, row.deal_reference)
+    return WorkingOrder(
+        row.deal_id,
+        row.epic,
+        row.deal_reference,
+        side=row.direction,
+        quantity=row.size,
+        status=row.status,
+        order_type=row.order_type,
+        time_in_force=row.time_in_force,
+        order_level=row.order_level,
+        created_date=row.created_date,
+        created_date_utc=row.created_date_utc,
+        good_till_date=row.good_till_date,
+    )
