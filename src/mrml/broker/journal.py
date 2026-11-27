@@ -46,7 +46,7 @@ class JournalStorageError(RuntimeError):
 
 
 class DispatchHeld(JournalConflict):
-    """An account already has its irreversible claim."""
+    """The account cannot admit the proposed durable claim."""
 
 
 @dataclass(frozen=True, repr=False)
@@ -380,10 +380,12 @@ class ExecutionJournal:
     ) -> DispatchClaim:
         with self._transaction() as session:
             row = self._scoped_intent(session, scope, intent_id, lock=True)
-            if session.scalar(
-                select(ClaimRow.id).where(ClaimRow.scope_id == row.scope_id)
+            if row.operation != "OPEN" or session.scalar(
+                select(ClaimRow.id).where(ClaimRow.scope_id == row.scope_id).limit(1)
             ):
-                raise DispatchHeld("Execution account already has a durable claim")
+                raise DispatchHeld(
+                    "Only the first preparatory opening claim is enabled"
+                )
             if (
                 baseline_id is not None
                 and session.scalar(
@@ -452,17 +454,41 @@ class ExecutionJournal:
                 raise JournalConflict("Execution evidence identity conflict")
             return _evidence(self._append(session, intent, event))
 
+    def claim_history(self, scope: Scope) -> tuple[DispatchClaim, ...]:
+        """Return all durable claims in their account admission order."""
+        with self._transaction() as session:
+            account = self._account(session, scope)
+            return () if account is None else self._claims(session, scope, account.id)
+
+    @staticmethod
+    def _claims(
+        session: Session, scope: Scope, account_id: UUID
+    ) -> tuple[DispatchClaim, ...]:
+        return tuple(
+            _claim(row, scope)
+            for row in session.scalars(
+                select(ClaimRow)
+                .where(ClaimRow.scope_id == account_id)
+                .order_by(ClaimRow.claim_number)
+            )
+        )
+
     def account_hold(self, scope: Scope) -> DispatchClaim | None:
+        """Return the original irreversible hold for legacy callers."""
         with self._transaction() as session:
             account = self._account(session, scope)
             if account is None:
                 return None
             claim = session.scalar(
-                select(ClaimRow).where(ClaimRow.scope_id == account.id)
+                select(ClaimRow)
+                .where(ClaimRow.scope_id == account.id)
+                .order_by(ClaimRow.claim_number)
+                .limit(1)
             )
             return _claim(claim, scope) if claim is not None else None
 
     def recover_unresolved(self, scope: Scope) -> tuple[DispatchClaim, ...]:
+        """Return the legacy hold. Use recover_gate for current uncertainty."""
         claim = self.account_hold(scope)
         return () if claim is None else (claim,)
 

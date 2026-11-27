@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Integer,
     Numeric,
     String,
     UniqueConstraint,
@@ -137,16 +138,23 @@ class ClaimRow(ExecutionBase):
                 "execution_evidence.id",
             ],
         ),
-        UniqueConstraint("scope_id"),
+        UniqueConstraint("scope_id", "claim_number", name="uq_execution_claim_number"),
+        CheckConstraint("claim_number > 0", name="ck_execution_claim_number"),
         UniqueConstraint("intent_id"),
         CheckConstraint(
             "event_kind = 'DISPATCH_CLAIM'", name="ck_execution_claim_kind"
         ),
     )
 
+    # Keep the legacy first-claim writer usable when migrating a 0005–0007 journal.
+    __mapper_args__ = {"eager_defaults": False}
+
     id: Mapped[UUID] = mapped_column(primary_key=True)
     scope_id: Mapped[UUID] = mapped_column()
     intent_id: Mapped[UUID] = mapped_column()
+    claim_number: Mapped[int] = mapped_column(
+        Integer, server_default="1", deferred=True
+    )
     event_kind: Mapped[str] = mapped_column(String(24), server_default="DISPATCH_CLAIM")
     baseline_id: Mapped[UUID | None] = mapped_column()
     claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

@@ -428,11 +428,12 @@ def test_postgres_migration_preserves_prior_records_and_refuses_nonempty_downgra
     claim = journal.claim_dispatch(ACCOUNT, intent.id)
     with pytest.raises(RuntimeError, match="empty execution"):
         command.downgrade(config, OLD_HEAD)
-    assert journal.recover_unresolved(ACCOUNT) == (claim,)
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
             "0005_execution_journal"
         )
+    command.upgrade(config, "head")
+    assert journal.recover_unresolved(ACCOUNT) == (claim,)
 
 
 def test_postgres_unique_intent_and_evidence_keys_even_without_repository(journal_pg):

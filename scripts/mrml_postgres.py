@@ -10,6 +10,7 @@ Usage:
 The 'test' command starts PostgreSQL when needed and stops it afterward only
 if this invocation started it. It never removes the database volume.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,7 +24,7 @@ from urllib.parse import quote
 try:
     from dotenv import dotenv_values
 except ImportError:
-    raise SystemExit("Install project dependencies first: pip install -e .")
+    raise SystemExit("Install project dependencies first: pip install -e .") from None
 
 SERVICE = "db"
 DEFAULT_TIMEOUT = 90
@@ -40,7 +41,9 @@ def locate_repo() -> Path:
     for root in candidates:
         if (root / "docker-compose.yml").is_file() and (root / ".env").is_file():
             return root
-    raise SystemExit("Run from the MRML repo root, with docker-compose.yml and .env present.")
+    raise SystemExit(
+        "Run from the MRML repo root, with docker-compose.yml and .env present."
+    )
 
 
 def configuration(root: Path) -> tuple[dict[str, str], str, str, str]:
@@ -58,19 +61,32 @@ def configuration(root: Path) -> tuple[dict[str, str], str, str, str]:
     return env, db, user, password
 
 
-def run(cmd: list[str], *, root: Path, env: dict[str, str],
-        check: bool = True, capture: bool = False) -> subprocess.CompletedProcess[str]:
+def run(
+    cmd: list[str],
+    *,
+    root: Path,
+    env: dict[str, str],
+    check: bool = True,
+    capture: bool = False,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        cmd, cwd=root, env=env, text=True, check=check,
+        cmd,
+        cwd=root,
+        env=env,
+        text=True,
+        check=check,
         capture_output=capture,
     )
 
 
-def compose(root: Path, env: dict[str, str], *args: str,
-            capture: bool = False) -> subprocess.CompletedProcess[str]:
+def compose(
+    root: Path, env: dict[str, str], *args: str, capture: bool = False
+) -> subprocess.CompletedProcess[str]:
     return run(
         ["docker", "compose", "--env-file", ".env", *args],
-        root=root, env=env, capture=capture,
+        root=root,
+        env=env,
+        capture=capture,
     )
 
 
@@ -84,8 +100,18 @@ def health(root: Path, env: dict[str, str]) -> str:
     if not cid:
         return "stopped"
     result = run(
-        ["docker", "inspect", "--format", "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}", cid],
-        root=root, env=env, check=False, capture=True,
+        [
+            "docker",
+            "inspect",
+            "--format",
+            "{{if .State.Health}}{{.State.Health.Status}}"
+            "{{else}}{{.State.Status}}{{end}}",
+            cid,
+        ],
+        root=root,
+        env=env,
+        check=False,
+        capture=True,
     )
     return result.stdout.strip() if result.returncode == 0 else "unknown"
 
@@ -102,7 +128,10 @@ def start(root: Path, env: dict[str, str], timeout: int) -> None:
         if status in ("exited", "dead"):
             raise RuntimeError(f"PostgreSQL container stopped: {status}")
         time.sleep(2)
-    raise RuntimeError(f"PostgreSQL did not become healthy within {timeout}s (state: {health(root, env)}).")
+    raise RuntimeError(
+        f"PostgreSQL did not become healthy within {timeout}s "
+        f"(state: {health(root, env)})."
+    )
 
 
 def stop(root: Path, env: dict[str, str]) -> None:
@@ -111,8 +140,9 @@ def stop(root: Path, env: dict[str, str]) -> None:
     compose(root, env, "stop", SERVICE)
 
 
-def test(root: Path, env: dict[str, str], db: str, user: str,
-         password: str, timeout: int) -> int:
+def test(
+    root: Path, env: dict[str, str], db: str, user: str, password: str, timeout: int
+) -> int:
     was_healthy = health(root, env) == "healthy"
     if not was_healthy:
         start(root, env, timeout)
@@ -127,7 +157,9 @@ def test(root: Path, env: dict[str, str], db: str, user: str,
         print("Running isolated MRML PostgreSQL tests...", flush=True)
         result = run(
             [sys.executable, "-m", "pytest", "-q", "-rs", *TEST_FILES],
-            root=root, env=test_env, check=False,
+            root=root,
+            env=test_env,
+            check=False,
         )
         return result.returncode
     finally:
@@ -140,8 +172,12 @@ def test(root: Path, env: dict[str, str], db: str, user: str,
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("start", "stop", "status", "test"))
-    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
-                        help="Health-check wait in seconds (default: 90)")
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_TIMEOUT,
+        help="Health-check wait in seconds (default: 90)",
+    )
     args = parser.parse_args()
     if args.timeout < 1:
         parser.error("--timeout must be positive")
