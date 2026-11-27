@@ -66,7 +66,7 @@ class IGExecutionMarket:
     margin_bands: NativeField[tuple[MarginBand, ...]]
     quote_decimal_places_factor: NativeField[Decimal]
     scaling_factor: NativeField[Decimal]
-    one_pip_means: NativeField[Decimal]
+    one_pip_means: NativeField[str]
     value_of_one_pip: NativeField[Decimal]
 
 
@@ -178,7 +178,7 @@ def parse_market_fields(
         margin_bands=bands,
         quote_decimal_places_factor=_field(snapshot, "decimalPlacesFactor", number),
         scaling_factor=_field(snapshot, "scalingFactor", number),
-        one_pip_means=_field(instrument, "onePipMeans", number),
+        one_pip_means=_field(instrument, "onePipMeans", _eurusd_pip_text),
         value_of_one_pip=_field(instrument, "valueOfOnePip", number),
     )
 
@@ -251,4 +251,19 @@ def _expiry(item: Any) -> str:
         is None
     ):
         raise ValueError("Unrecognized expiry format")
+    return item
+
+
+def _eurusd_pip_text(item: Any) -> str:
+    # This is EUR/USD display text. Only numeric labels and the known currency
+    # notation are shareable, and the whole string is retained without conversion.
+    if (
+        not isinstance(item, str)
+        or len(item) > 48
+        or re.fullmatch(
+            r" *[0-9]+(?:\.[0-9]+)?(?: +USD(?: */ *EUR| +per +EUR)?)? *", item
+        )
+        is None
+    ):
+        raise ValueError("Unrecognized EUR/USD pip label")
     return item

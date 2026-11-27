@@ -627,11 +627,17 @@ support.
   authorization terms can be checked against offline fixtures. Authenticated
   broker and operator evidence and atomic successor admission remain prerequisites
   for B3. [Pre-execution admission audit](audit/MRML_B2_S4B_PRE_EXECUTION_ADMISSION.md)
-- **B2-S4C1 — IG demo read-only execution evidence discovery (fixture-tested;
-  credentialed capture pending).** The bounded diagnostic reports session
+- **B2-S4C1 — IG demo read-only execution evidence discovery (credentialed
+  capture completed 2026-11-27).** The bounded diagnostic recorded session
   scope, exposure coverage and timing, and native dealing and margin fields.
-  Product-level unit mapping and operational admission remain pending.
   [IG evidence discovery audit](audit/MRML_B2_S4C1_IG_EVIDENCE_DISCOVERY.md)
+- **B2-S4C2 — EUR/USD execution unit semantics (read-only review complete;
+  executable mapping pending).** Native pip labels are preserved safely.
+  Published standard-contract and pip economics corroborate parts of the
+  capture. Exact demo size increments, API stop and quote scaling, and
+  SEK initial-margin conversion remain unverified. Operational admission
+  remains disabled.
+  [Execution unit semantics audit](audit/MRML_B2_S4C2_EXECUTION_UNIT_SEMANTICS.md)
 
 **B3 — First controlled IG demo opening (planned; not authorized).**
 After B2-S4 readiness passes, implement and separately authorize one bounded,
