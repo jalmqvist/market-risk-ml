@@ -1,74 +1,107 @@
-# MRML Architecture (v0.3 canonical, 2026-10-23)
+# MRML Architecture (v0.4 platform-first, 2026-11-27)
 
-Supersedes prior planning drafts and the transitional v0.2 + amendment
-layout.
+This document describes the current IG demo platform-first architecture.
+[The roadmap](ROADMAP.md) governs delivery status and acceptance; the
+original MPML-first adapter and replay evidence below is retained as a
+historical, reusable integration record, not the current critical path.
 
 ## 1. Purpose
 
-MRML is the execution and risk layer of the pipeline BSVE -\> MSML -\>
-MPML -\> MRML.
+MRML is a minimal, independent broker-connected trading, risk and operational
+platform. The first operational objective is a controlled end-to-end **IG demo**
+lifecycle: retrieve account and market data, explicitly authorize one small
+opening, verify confirmation and exposure, close the known position and
+reconcile immutable journal evidence. Live capital and live IG endpoints are
+outside v0.
 
--   MPML answers: which strategy has historically worked best in this
-    state?
--   MRML answers: given today's executable context and risk limits,
-    should we act, and how much?
-
-MRML v0 is a forward-test harness. Its first job is to establish whether
-the walk-forward system survives live execution (parity, slippage,
-operational failure modes). It is not a proof of edge.
+MRML is the eventual execution/risk layer of BSVE → MSML → MPML → MRML, but
+does not require either research repository for its first platform proof of
+concept. MPML supplies optional future recommendations and owns strategy
+research; MRML independently owns execution decisions, sizing, broker data,
+account state and risk. Forward-test performance and strategy parity are later
+evaluation objectives, not prerequisites for a manual demo lifecycle.
 
 ## 2. Principles
 
-1.  Fail closed. Any missing, stale, or inconsistent input means no new
-    trades.
-2.  Trade what was tested. No execution path is introduced ad hoc in
-    MRML.
-3.  One source of strategy logic: MPML, through a pinned and explicitly
-    supported runtime interface. Do not assume that a batch historical
-    backtester is a per-decision runtime API.
-4.  Research artifacts and runtime code are distinct interfaces:
-    Recommendations and provenance are versioned research inputs; the
-    strategy runtime supplies current signals. Neither interface
-    transfers walk-forward responsibility to MRML.
-5.  Everything is journaled: signals, risk decisions, orders, fills,
-    state/shadow, artifact versions, and config hash.
-6.  Research datasets stay immutable. MRML never writes to them.
-7.  Deterministic, replayable daily run. Same inputs give same
-    decisions.
+1. **Platform first:** prove an operator-controlled IG demo opening, readback
+   and closing before recommendation-driven operation.
+2. **Fail closed:** missing, stale, conflicting or unverified account, price,
+   broker or risk evidence blocks exposure-changing operations.
+3. **Broker authority:** IG is authoritative for account state, fills and
+   positions; MRML records observations and reconciles them independently.
+4. **No ambiguous write retry:** durable claims precede broker mutation; a
+   timeout or restart does not justify resubmission.
+5. **Account gate is not authorization:** immutable historical claims,
+   claim-specific uncertainty, present exposure, operational blockers,
+   independent risk approval and operator authorization remain distinct.
+6. **Provider boundaries:** preserve replaceable MarketDataProvider,
+   BrokerExecutionProvider and RecommendationProvider contracts.
+7. **Minimal interface:** explicit terminal commands and concise sanitized
+   audit output before GUIs, automation or scheduling.
+8. **Separate research:** MPML owns strategy selection, evaluation and its
+   causal runtime; MSML owns sentiment research. Neither is required to
+   operate the basic platform.
 
-## 3. Two clocks
+## 3. Operational stages and clocks
 
-SLOW (weeks/offline): MPML performs research and walk-forward
-evaluation, then exports Recommendation and manifest/provenance
-artifacts.
+**Now — manual IG demo lifecycle:** an operator selects a narrowly bounded
+action, MRML verifies an intended demo account and current exposure, applies
+reviewed IG dealing/risk constraints, records immutable intent and an atomic
+dispatch claim, performs at most one separately authorized broker mutation,
+then records acknowledgement, confirmation, independent readback and
+reconciliation. Broker writes are **not implemented or authorized** as of
+2026-11-27.
 
-FAST (daily, after D1 close): MRML validates the frozen
-bundle/configuration, constructs broker-derived D1 **price bars**,
-obtains a current signal through the supported pinned MPML
-strategy-runtime interface, applies MRML risk controls, executes if
-approved, and journals the result.
+**Later — recommendation-driven daily cycle:** MPML produces frozen research
+recommendations (slow/offline) and the pinned causal strategy runtime can
+supply current signals (at the relevant completed-bar cutoff). MRML validates
+the proposed action against its own IG-derived market phase, broker state,
+risk, causal timing and account gate. This integration is deferred until the
+independent platform demonstration; MPML's historical Backtester must not
+become an execution runtime.
 
-A Recommendation bundle is a versioned research input and slow prior.
-MRML never runs walk-forward evaluation, training, strategy ranking, or
-Recommendation generation. The daily runtime must not invoke MPML's
-historical Backtester.
+The historical OANDA and MPML runtime integration below remains usable
+research compatibility infrastructure; it is not the active IG demo
+execution path.
 
-## 4. Components
+## 4. Current components and persistence boundaries
 
--   contracts: typed MPML artifact schemas, bundle loader, validation.
--   data: OANDA client (thin, requests-based), bar builder (H1-\>D1 with
-    MPML-identical boundaries), optional research feeds.
--   strategy: StrategyRunner adapter for a pinned, supported MPML causal
-    strategy-runtime interface (PhaseAware-first in v0). Its contract
-    must be distinguished from MPML's batch historical `Backtester`; if
-    MPML does not expose a suitable runtime entry point, define that
-    contract before binding it.
--   risk: RiskController (pure functions, no I/O).
--   execution: order manager (idempotent), reconciler.
--   journal: Postgres repositories + migrations.
--   runner: daily orchestration, dry-run mode, alerting.
+- **IG demo data:** authenticated bounded, read-only broker and market-data
+  adapters; provisional timestamp serialization policy and explicit source
+  observations in PostgreSQL.
+- **Canonical market data:** independent versioned instrument mappings,
+  source revisions and H1 interpretation; no forced historical MPML broker
+  parity.
+- **Legacy journal and strategy scaffold:** run/config, signals, risk
+  decisions, orders and floating-point fills; retain APIs without using
+  legacy orders as the authoritative broker execution ledger.
+- **Execution journal (B2-S1):** immutable scoped intent/fingerprint,
+  irreversible dispatch claim, append-only evidence and per-account hold.
+- **Broker observations (B2-S2):** immutable account-wide position and
+  working-order collections; intent-specific transaction evidence and
+  versioned opening correlation with exact replay after restart.
+- **Account gates (B2-S3):** append-only gate transitions, offline claim
+  uncertainty resolution, operational restrictions and conservative
+  recovery. One historical claim per account is still enforced.
+- **Risk:** existing independent pure-risk scaffold; IG-specific order
+  size, currency, dealing rules, available funds/margin and exact operator
+  authorization remain to be integrated before an order.
+- **Recommendations and runtime:** optional MPML bundle validation,
+  PhaseAware strategy adapter and historical parity tests; not an
+  execution prerequisite.
+- **Interface:** small commands/status/audit reports; no trading GUI,
+  background scheduler or automatic broker writes.
 
-### Strategy-runtime contract (Integration PR2; see [ADR-007](adr/ADRs.md#adr-007-causal-phaseaware-strategy-runtime-interface))
+Milestone A's bounded source-only IG demo ingestion has passed operational
+readback; nonempty confirmation/position payloads and a complete position
+lifecycle remain unverified. The current schema head is
+`0007_account_gate`. See [B1-S3 lifecycle](design/IG_B1_S3_BROKER_LIFECYCLE.md),
+[B2-S3 audit](audit/MRML_B2_S3_ACCOUNT_GATE_RECOVERY.md) and
+[Milestone B](ROADMAP.md#milestone-b--position-and-order-lifecycle-on-ig-demo).
+
+### Historical MPML strategy-runtime contract (Integration PR2; see [ADR-007](adr/ADRs.md#adr-007-causal-phaseaware-strategy-runtime-interface))
+
+
 
 The v0 runtime composition is the pinned canonical MPML
 `PhaseAwareStrategy("TF4", "MR42")`; MRML must not maintain a second
@@ -145,46 +178,58 @@ must start at a stable date because the signals are forward-filled state.
     checkout at MPML `90d8ea733b4a7fad1ebca8df95f6554bb3ae6e3d`. It
     establishes fixture reproducibility, not current-decision parity.
 
-## 5. Data model (Postgres operational store)
+## 5. Durable storage model (current)
 
-Tables: artifact_bundles, runs, bars_h1, bars_d1 (derived),
-state_observations (optional/shadow), signals, risk_decisions, orders,
-fills, positions_snapshot, pnl_snapshots, shadow_events,
-config_snapshots.
+The SQLAlchemy/Alembic operational store contains legacy run, signal,
+risk-decision, order, fill and config-snapshot records. IG market-data
+storage maintains revision-aware source observations, interpretations,
+ingestion attempts and retrieval provenance.
 
-Rules: - every row carries run_id - signals reference bundle_id and
-evaluation_id where applicable - orders use deterministic
-client_order_id = hash(run_date, pair, strategy_id, direction) so a
-re-run cannot double-submit
+The separate **broker execution ledger** contains `execution_accounts`,
+`execution_intents`, `execution_claims`, `execution_evidence`,
+`broker_observations`, `broker_assessments`,
+`broker_assessment_inputs` and `broker_gate_transitions`.
+PostgreSQL constraints, account-row serialization and append-only triggers
+protect identity, evidence and gate history. New broker amounts use exact
+Decimal/NUMERIC-compatible storage. Full historical claim history remains
+immutable; one claim per account currently blocks repeat dispatch.
 
-## 6. Daily run (idempotent)
+Do not infer that a legacy run-scoped `client_order_id`, a matched
+opening or a replayable assessment independently authorizes a broker
+write. Broker reads collected separately do not form an atomic snapshot.
 
-1.  Lock; create run row (config hash, bundle hash, code version).
-2.  Reconcile broker positions/orders with the journal. Mismatch -\>
-    halt, alert.
-3.  Seed/append D1 price bars from approved historical data and broker
-    H1→D1 aggregation using the agreed MPML-compatible day boundaries.
-    Gaps, incomplete bars, or late data that violate policy -\> halt.
-4.  Validate bundle and configuration: schema, counts, referential
-    integrity, provenance, and any configured evidence-end rule.
-5.  For each configured pair, obtain the current signal from the
-    supported MPML PhaseAware runtime interface using only data
-    available at the decision time. Do not run walk-forward evaluation
-    or the historical Backtester.
-6.  RiskController approves/rejects; journal every decision with reason.
-7.  Execute (demo only until explicitly changed). Journal fills and
-    slippage vs manifest costs.
-8.  Snapshot equity, drawdown, exposure; send run summary.
+## 6. Near-term execution workflow (planned, not implemented)
 
-## 7. Risk controller (v0)
+1. Operator explicitly selects a single **demo-only** action and account.
+2. Verify active session/account, complete and current account exposure,
+   instrument/dealing rules, unit size, funds/margin, risk limits and
+   action-specific authorization.
+3. Persist immutable intent and an atomic durable dispatch claim before
+   any network mutation; commit before the broker request.
+4. Send one bounded, authorized mutation with no automatic write retry.
+5. Preserve returned transaction reference separately from issued reference
+   and affected deal IDs; independently retrieve confirmation and exposure.
+6. Persist observed facts and versioned reconciliation; preserve holds and
+   halt on unknown, mismatched or unreplayable outcomes.
+7. Report status without credentials or raw sensitive account IDs.
 
-Single profile, configurable, flat sizing: - risk per trade: default
-0.5% equity (MPML backtests may assume 1%; difference logged) - max
-concurrent positions (global and per pair) - max net exposure per
-currency (risk units) - equity drawdown kill switch (halts new entries,
-does not force liquidation) - daily loss limit - stale-bundle block
+Before this workflow can run, B2-S4 must review necessary risk/authorization
+integration and the account's one-historical-claim restriction, including a
+safe route from opening to separately authorized closing. See B3/B4 in the
+roadmap. No write operation has yet been implemented or exercised.
 
-Deferred: state-conditional sizing, multi-profile, multi-user.
+## 7. Risk boundary and staged acceptance
+
+A limited but real execution-specific subset of Milestone C must gate the
+first B3 demo opening: fresh verified broker identity, complete account
+positions/orders, known currency and instrument dealing units, conservative
+size/stop rules, available funds and margin, unambiguous risk refusal,
+exact operator authorization and demo-only endpoint enforcement. Reject
+rather than invent a protective stop or a missing quantity conversion.
+
+Milestone C separately completes broader controls (currency concentration,
+portfolio exposure, drawdown, daily loss, kill switch and reporting). No
+MPML signal or research recommendation is necessary for B3/B4.
 
 ## 8. State and recommendation semantics (ADR-006)
 
@@ -217,14 +262,19 @@ research-artifact interface is separate from the pinned strategy-runtime
 interface used to obtain a current signal. Neither permits MRML to rerun
 evaluation or independently rank strategies.
 
-## 10. Rollout
+## 10. Delivery and rollout (current)
 
--   Stage A: PhaseAware TF4/MR42 baseline set, dry-run then OANDA demo.
--   Stage B: alternative compositions from new bundles (configuration
-    change only).
--   Stage C: selector + behavioral features only after model-serving
-    design and evidence updates.
--   Live capital: separate decision, outside v0 scope.
+The authoritative critical path is **A → B → C → D → E → F**.
+A's bounded IG source-only data ingestion is accepted. B0, B1-S1–S4
+and B2-S1–S3 established the read-only and offline persistence foundation.
+Next: B2-S4 narrow pre-execution gate, B3 single authorized demo opening,
+B4 independently authorized closing/reconciliation. Limited necessary C
+risk controls are prerequisites of B3; comprehensive C and the simple
+terminal PoC (D) follow. MPML recommendation integration (E) and
+integrated demo forward test (F) remain later.
+
+Old OANDA-first and MPML-first rollout descriptions in the archived
+roadmap and earlier ADRs are historical, not operational instructions.
 
 ## 11. Non-goals (v0)
 
@@ -246,22 +296,18 @@ instruments.
 -   ADR-005: PROPOSED (hosting, secrets, backup policy)
 -   ADR-006: ACCEPTED (state and recommendation semantics)
 
-## 13. Success criteria for v0 forward test
+## 13. Acceptance criteria and later forward-test evidence
 
--   Zero unreconciled broker/journal mismatches.
--   Historical replay baseline: the frozen canonical MPML fixture
-    reproduces its hash-pinned signals, execution timeline, trades,
-    diagnostics, and metrics.
--   Runtime parity: after the runtime contract is established, MRML's
-    per-decision signals match the agreed canonical MPML signal fixtures
-    on identical available history; historical batch replay alone does
-    not satisfy this criterion.
--   Market-bar parity: after H1→D1 validation, MRML price bars match
-    MPML's agreed D1 boundary and aggregation convention on overlapping
-    data.
--   Live demo signals on day N match dry-run recompute on the same bars.
--   Slippage and spread per fill are measured and compared with MPML
-    assumed costs.
--   Every skipped trade has a logged reason.
--   No conclusions about edge until sufficient sample size; report trade
-    counts and quality diagnostics, not only P&L.
+**First platform proof (B3/B4/D):** one explicitly approved small IG demo
+position is opened, independently confirmed and read back, then closed
+under a separately approved action, with journal/broker reconciliation,
+bounded uncertainty handling, restart-safe audit and concise terminal
+reporting. Live-capital trading remains impossible in scope.
+
+**Later recommendation/forward-test validation (E/F):** MPML signal
+provenance and causal behavior, phase conventions, IG price differences,
+slippage and spread versus assumptions, skipped-action reasons, and
+ongoing journal/broker parity must be measured independently. Historical
+replay fixtures, synthetic strategy prefixes and broker-source ingestion
+evidence do not substitute for operational IG demo lifecycle acceptance.
+No trading-edge claim is warranted from the initial demonstration.
