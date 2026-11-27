@@ -298,3 +298,93 @@ def test_market_response_size_is_bounded(monkeypatch, capsys):
     report = json.loads(capsys.readouterr().out)
     assert report["error"] == "IG broker-state response exceeds the byte budget"
     assert len(transport.calls) == 4
+
+
+@pytest.mark.parametrize(
+    "label", ["0.0001", "0.0001 USD/EUR", " 0.000100 USD / EUR ", "0.0001 USD per EUR"]
+)
+def test_pip_label_preserves_safe_native_text(monkeypatch, capsys, label):
+    market = deepcopy(MARKET)
+    market["instrument"]["onePipMeans"] = label
+    client, _ = client_for(*responses(market=market))
+    configure(monkeypatch, client)
+
+    assert ig_broker_probe.main(["execution-evidence"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["schema"] == "ig-demo-execution-evidence-v1"
+    assert report["market"]["one_pip_means"] == {
+        "status": "available",
+        "value": label,
+    }
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "",
+        "   ",
+        0.0001,
+        True,
+        {"value": "0.0001"},
+        "0.0001 USD/EUR\n",
+        "0.0001 USD/EUR\u001b",
+        "０.０００１ USD/EUR",
+        "0.0001 USD/GBP",
+        "0.0001 USD/EUR private-info",
+        "1" * 49,
+    ],
+)
+def test_pip_label_rejects_malformed_or_unsafe_values(monkeypatch, capsys, label):
+    market = deepcopy(MARKET)
+    market["instrument"]["onePipMeans"] = label
+    client, _ = client_for(*responses(market=market))
+    configure(monkeypatch, client)
+
+    assert ig_broker_probe.main(["execution-evidence"]) == 0
+    output = capsys.readouterr().out
+    assert json.loads(output)["market"]["one_pip_means"] == {
+        "status": "malformed",
+        "value": None,
+    }
+    assert "private-info" not in output
+
+
+@pytest.mark.parametrize("instrument_fields", [{}, {"onePipMeans": None}])
+def test_pip_label_absence_stays_missing(instrument_fields):
+    market = deepcopy(MARKET)
+    market["instrument"].update(instrument_fields)
+    client, _ = client_for(*responses(market=market))
+    client.authenticate(bounded=True)
+
+    native = client.discover_execution_evidence(EPIC, account_id=ACCOUNT).market
+    assert native.one_pip_means.status == "missing"
+    assert native.one_pip_means.value is None
+
+
+def test_capture_retains_exact_margin_and_keeps_conflicting_rules_explicit(
+    monkeypatch, capsys
+):
+    factor = "3.3300000000000000710542735760100185871124267578125"
+    market = deepcopy(MARKET)
+    market["instrument"].update(
+        marginFactor=factor,
+        currencies=[
+            {"code": "USD", "isDefault": True},
+            {"code": "EUR", "isDefault": True},
+        ],
+        marginDepositBands=[{"currency": "USD", "margin": "3.33", "min": 10, "max": 0}],
+    )
+    market["dealingRules"]["minDealSize"] = {"value": "0.1", "unit": "POINTS"}
+    market["dealingRules"]["minStepDistance"] = {"value": "5.0", "unit": "POINTS"}
+    # Use a JSON number so binary float parsing would lose the original decimal.
+    wire = json.dumps(market).replace(f'"{factor}"', factor).encode()
+    client, _ = client_for(*responses(market=wire))
+    configure(monkeypatch, client)
+
+    assert ig_broker_probe.main(["execution-evidence"]) == 0
+    native = json.loads(capsys.readouterr().out)["market"]
+    assert native["margin_factor"] == {"status": "available", "value": factor}
+    assert native["margin_bands"]["status"] == "ambiguous"
+    assert native["currencies"]["status"] == "ambiguous"
+    assert native["size_increment"]["status"] == "unsupported"
+    assert native["size_precision"]["status"] == "unsupported"
