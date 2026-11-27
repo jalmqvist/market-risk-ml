@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
+from uuid import UUID
 
 from mrml.broker.evidence import (
     AffectedDeal,
@@ -170,3 +171,20 @@ def working_order_evidence(row: IGWorkingOrder) -> WorkingOrder:
         created_date_utc=row.created_date_utc,
         good_till_date=row.good_till_date,
     )
+
+
+@dataclass(frozen=True, repr=False)
+class IGSessionObservation:
+    generation: UUID
+    authenticated_at: datetime
+    authenticated_tick: float
+    dealing_enabled: bool | None
+    dealing_enabled_malformed: bool
+
+
+@dataclass(frozen=True)
+class IGExposureWindow:
+    started_at: datetime
+    observed_at: datetime
+    count: int
+    elapsed_seconds: float

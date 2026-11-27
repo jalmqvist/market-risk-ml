@@ -16,6 +16,7 @@ from email.utils import parsedate_to_datetime
 from http.client import HTTPConnection
 from typing import Any, Self
 from urllib.parse import quote
+from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
@@ -29,10 +30,13 @@ from mrml.data.ig_broker_state import (
     IGActivityAction,
     IGAffectedDeal,
     IGConfirmation,
+    IGExposureWindow,
     IGPosition,
     IGPositionObservation,
+    IGSessionObservation,
     IGWorkingOrder,
 )
+from mrml.data.ig_execution_market import IGExecutionMarket, parse_market_fields
 
 DEMO_GATEWAY = "https://demo-api.ig.com/gateway/deal"
 SAMPLE_SIZE = 32
@@ -164,6 +168,20 @@ class IGAccount:
     status: str | None
     balances: IGAccountBalance | None = field(default=None, repr=False)
     active: bool | None = None
+
+
+@dataclass(frozen=True, repr=False)
+class IGExecutionCapture:
+    session: IGSessionObservation
+    account: IGAccount
+    positions: IGExposureWindow
+    working_orders: IGExposureWindow
+    market: IGExecutionMarket
+    finished_at: datetime
+    exposure_span_seconds: float
+    exposure_age_seconds: float
+    session_age_seconds: float
+    market_observed_at: datetime
 
 
 @dataclass(frozen=True)
@@ -345,6 +363,7 @@ class IGClient:
         self._login = {"identifier": username, "password": password}
         self._tokens: dict[str, str] = {}
         self._active_account_id: str | None = None
+        self._session_observation: IGSessionObservation | None = None
         self._login_timezone_offset_hours: int | float | None = None
         self._session = requests.Session() if session is None else session
         self._owns_session = session is None
@@ -356,16 +375,19 @@ class IGClient:
         return self
 
     def __exit__(self, *_: object) -> None:
-        self._tokens.clear()
-        self._active_account_id = None
+        self._invalidate_session()
         if self._owns_session:
             self._session.cookies.clear()
             self._session.close()
 
-    def authenticate(self, *, bounded: bool = False) -> None:
+    def _invalidate_session(self) -> None:
         self._tokens.clear()
         self._active_account_id = None
+        self._session_observation = None
         self._login_timezone_offset_hours = None
+
+    def authenticate(self, *, bounded: bool = False) -> None:
+        self._invalidate_session()
         payload, response = self._request(
             "/session", 2, login=True, broker_state=bounded
         )
@@ -381,6 +403,14 @@ class IGClient:
                 raise IGAuthenticationError("IG returned malformed login data")
         self._tokens = tokens
         self._active_account_id = payload["currentAccountId"]
+        dealing_enabled = payload.get("dealingEnabled")
+        self._session_observation = IGSessionObservation(
+            uuid4(),
+            datetime.now(UTC),
+            time.monotonic(),
+            dealing_enabled if type(dealing_enabled) is bool else None,
+            dealing_enabled is not None and type(dealing_enabled) is not bool,
+        )
         offset = payload.get("timezoneOffset")
         if isinstance(offset, Decimal) and offset.is_finite():
             offset = float(offset)
@@ -496,21 +526,142 @@ class IGClient:
 
     def get_positions(self) -> tuple[IGPosition, ...]:
         self.get_broker_accounts()
+        return self._read_positions()
+
+    def _read_positions(self, *, discovery: bool = False) -> tuple[IGPosition, ...]:
         payload = self._broker_request("/positions", 1)
         try:
-            return tuple(_position(row) for row in _broker_rows(payload, "positions"))
+            rows = self._read_exposure_rows(payload, "positions", discovery)
+            return tuple(_position(row) for row in rows)
         except ValueError:
             raise IGError("IG returned malformed position data") from None
 
     def get_working_orders(self) -> tuple[IGWorkingOrder, ...]:
         self.get_broker_accounts()
+        return self._read_working_orders()
+
+    def _read_working_orders(
+        self, *, discovery: bool = False
+    ) -> tuple[IGWorkingOrder, ...]:
         payload = self._broker_request("/workingorders", 2)
         try:
-            return tuple(
-                _working_order(row) for row in _broker_rows(payload, "workingOrders")
-            )
+            rows = self._read_exposure_rows(payload, "workingOrders", discovery)
+            return tuple(_working_order(row) for row in rows)
         except ValueError:
             raise IGError("IG returned malformed working-order data") from None
+
+    def _read_exposure_rows(
+        self, payload: dict[str, Any], key: str, discovery: bool
+    ) -> list[Any]:
+        if not discovery:
+            return _broker_rows(payload, key)
+        if "accountId" in payload and payload["accountId"] != self._active_account_id:
+            self._invalidate_session()
+            raise IGEvidenceConflict("IG exposure account conflicts with the session")
+        return _execution_rows(payload, key)
+
+    def discover_execution_evidence(
+        self, epic: str, *, account_id: str
+    ) -> IGExecutionCapture:
+        """Read one explicit account and EUR/USD market using a single login."""
+        validate_epic(epic)
+        _text(account_id)
+        session = self._session_observation
+        if session is None or self._active_account_id != account_id:
+            raise IGSessionError("IG login account does not match the intended scope")
+
+        currency = self._check_execution_session(account_id, session)
+        try:
+            accounts = self.get_broker_accounts()
+        except IGSessionError:
+            self._invalidate_session()
+            raise
+        account = next(row for row in accounts if row.active)
+        if (
+            account.account_id != account_id
+            or account.currency is None
+            or account.currency != currency
+        ):
+            self._invalidate_session()
+            raise IGSessionError("IG account and session identity did not agree")
+
+        payload = self._broker_request(f"/markets/{epic}", 2)
+        market_observed_at = datetime.now(UTC)
+        try:
+            instrument = _object(payload.get("instrument"))
+            snapshot = _object(payload.get("snapshot"))
+            if (
+                instrument.get("epic") != epic
+                or not _is_eurusd(instrument.get("type"), _text(instrument.get("name")))
+                or ("epic" in snapshot and snapshot["epic"] != epic)
+                or ("epic" in payload and payload["epic"] != epic)
+            ):
+                raise ValueError("Conflicting market identity")
+        except ValueError:
+            raise IGMarketError(
+                "IG market details did not validate the configured EUR/USD EPIC"
+            ) from None
+        market = parse_market_fields(epic, payload, _broker_decimal)
+
+        start = time.monotonic()
+        positions_start = datetime.now(UTC)
+        position_rows = self._read_positions(discovery=True)
+        positions_end = datetime.now(UTC)
+        orders_start_tick = time.monotonic()
+        orders_start = datetime.now(UTC)
+        order_rows = self._read_working_orders(discovery=True)
+        orders_end = datetime.now(UTC)
+        orders_end_tick = time.monotonic()
+        if any(
+            len({row.deal_id for row in rows}) != len(rows)
+            for rows in (position_rows, order_rows)
+        ):
+            raise IGEvidenceConflict("IG exposure returned duplicate deal identities")
+        if self._check_execution_session(account_id, session) != currency:
+            self._invalidate_session()
+            raise IGSessionError("IG session currency changed during the capture")
+
+        finish_tick = time.monotonic()
+        return IGExecutionCapture(
+            session,
+            account,
+            IGExposureWindow(
+                positions_start,
+                positions_end,
+                len(position_rows),
+                orders_start_tick - start,
+            ),
+            IGExposureWindow(
+                orders_start,
+                orders_end,
+                len(order_rows),
+                orders_end_tick - orders_start_tick,
+            ),
+            market,
+            datetime.now(UTC),
+            orders_end_tick - start,
+            finish_tick - start,
+            finish_tick - session.authenticated_tick,
+            market_observed_at,
+        )
+
+    def _check_execution_session(
+        self, account_id: str, session: IGSessionObservation
+    ) -> str:
+        payload = self._broker_request(
+            "/session", 1, params={"fetchSessionTokens": "false"}
+        )
+        currency = payload.get("currency")
+        if (
+            self._session_observation is not session
+            or self._active_account_id != account_id
+            or payload.get("accountId") != account_id
+            or not isinstance(currency, str)
+            or re.fullmatch(r"[A-Z]{3}", currency) is None
+        ):
+            self._invalidate_session()
+            raise IGSessionError("IG session read did not confirm the intended scope")
+        return currency
 
     def get_activity(self, start: datetime, end: datetime) -> tuple[IGActivity, ...]:
         validate_activity_window(start, end)
@@ -881,8 +1032,7 @@ class IGClient:
             if code.startswith("error.security.api-key-"):
                 raise IGAuthenticationError("IG rejected the demo API key")
             if not login and (code in _SESSION_ERRORS or status == 401):
-                self._tokens.clear()
-                self._active_account_id = None
+                self._invalidate_session()
                 raise IGSessionError("IG rejected the session or it expired")
             if login and (
                 status in (400, 401, 403)
@@ -939,6 +1089,20 @@ def _broker_rows(
     if len(rows) > limit:
         raise ValueError("Collection exceeds the row budget")
     return rows
+
+
+def _execution_rows(payload: dict[str, Any], key: str) -> list[Any]:
+    metadata = payload.get("metadata")
+    if (
+        any(name in payload for name in ("paging", "pageData", "next"))
+        or (metadata is not None and not isinstance(metadata, dict))
+        or (
+            isinstance(metadata, dict)
+            and any(name in metadata for name in ("paging", "pageData", "next"))
+        )
+    ):
+        raise ValueError("Account-wide collection has unknown coverage")
+    return _broker_rows(payload, key)
 
 
 def _broker_enum(value: Any) -> str:
