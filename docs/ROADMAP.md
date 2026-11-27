@@ -609,16 +609,22 @@ remains in place. Broker verification and action authorization are still
 required. [Account gate audit](audit/MRML_B2_S3_ACCOUNT_GATE_RECOVERY.md)
 
 
-**B2-S4 — Narrow pre-execution safety boundary (next; not yet implemented).**
+**B2-S4 — Narrow pre-execution safety boundary (in progress).**
 Verify the existing read-only broker diagnostics and define the smallest
 execution-specific contract necessary for one operator-authorized IG demo
 opening: exact account/session identity, current complete account exposure,
 dealing-rule and size constraints, risk/margin checks, immutable approved
-request, durable claim and explicit operator authorization. Assess the
-one-claim-per-account limitation and a safe path to closing before enabling
-writes. Prefer bounded local validation and a focused implementation only
-where a specific blocking capability is absent; do not broaden the
-persistence model without an operational need. No live-capital support.
+request, durable claim and explicit operator authorization. No live-capital
+support.
+
+- **B2-S4A — Successive claim history and closing preparation (implemented
+  offline).** The journal can represent ordered immutable claim history.
+  PostgreSQL still admits only the first preparatory opening claim. Closing
+  preparation binds a separate intent to the verified affected deal and
+  fresh complete exposure. [Successive claims audit](audit/MRML_B2_S4A_SUCCESSIVE_CLAIMS.md)
+- **B2-S4B — Verified dispatch admission (pending).** Complete the
+  pre-execution checks and enforce admission before enabling successor
+  claims or proceeding to B3.
 
 **B3 — First controlled IG demo opening (planned; not authorized).**
 After B2-S4 readiness passes, implement and separately authorize one bounded,

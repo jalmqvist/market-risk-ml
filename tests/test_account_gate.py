@@ -28,7 +28,12 @@ from mrml.broker.gate import (
     TransitionReason,
 )
 from mrml.broker.gate_models import GateTransitionRow
-from mrml.broker.journal import DispatchHeld, JournalConflict, JournalStorageError
+from mrml.broker.journal import (
+    ApprovedRequest,
+    DispatchHeld,
+    JournalConflict,
+    JournalStorageError,
+)
 from mrml.broker.journal_models import ClaimRow, EvidenceRow, IntentRow
 from mrml.broker.observation_models import AssessmentInputRow, AssessmentRow
 from mrml.broker.observations import AssessmentInputs, Collection, ConfirmationNotFound
@@ -582,3 +587,278 @@ def test_postgres_direct_resolution_cannot_use_wrong_collection_or_forged_match(
     assert state.outstanding_claim == claim
     assert Blocker.EVIDENCE_UNREPLAYABLE in state.blockers
     assert not gate.consider_action(ACCOUNT, REQUEST, at=at).can_consider
+
+
+def closing(gate, key="close", *, deal=DEAL, quantity=POSITION.quantity, auth="close"):
+    return gate.create_intent(
+        ACCOUNT,
+        idempotency_key=key,
+        request=ApprovedRequest(
+            "CLOSE",
+            POSITION.instrument,
+            "SELL",
+            quantity,
+            "MARKET",
+            "-",
+            target_deal_id=deal,
+        ),
+        authorization_id=auth,
+    )
+
+
+def test_postgres_closing_preparation_requires_fresh_reads_after_restart(
+    gate_pg,
+):
+    gate, engine, _ = gate_pg
+    claim = new_claim(gate)
+    assessment, at = make_assessment(gate, claim)
+    transition = resolve(gate, claim, assessment, at)
+    later = at + timedelta(minutes=1)
+    successor = closing(gate)
+    with pytest.raises(GateEvidenceError, match="EXPOSURE_STALE"):
+        gate.prepare_closing(ACCOUNT, successor.id, at=later)
+    position_id, orders_id = make_reads(gate, later, "refreshed")
+    decision = later + 8 * SECOND
+    engine.dispose()
+    reopened = GateJournal(engine)
+    state = reopened.recover_gate(ACCOUNT, at=decision)
+    assert state.claims == reopened.claim_history(ACCOUNT) == (claim,)
+    assert state.latest_claim == claim
+    assert state.outstanding_claims == ()
+    assert state.history == (transition,)
+    assert state.attributable_positions == (POSITION,)
+    assert state.unmatched_positions == ()
+    binding = reopened.prepare_closing(ACCOUNT, successor.id, at=decision)
+    assert binding.opening_claim == claim
+    assert binding.closing_intent_id == successor.id
+    assert binding.authorization_id == successor.authorization_id
+    assert (binding.target_deal_id, binding.quantity) == (DEAL, POSITION.quantity)
+    assert (binding.positions_id, binding.orders_id) == (position_id, orders_id)
+    assert binding.gate_revision == transition.revision
+    for _ in range(2):
+        with pytest.raises(DispatchHeld):
+            reopened.claim_dispatch(ACCOUNT, successor.id)
+    assert reopened.read_intent(ACCOUNT, successor.id)[1] == ()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"deal": "unrelated"},
+        {"quantity": POSITION.quantity * 2},
+        {"quantity": POSITION.quantity - 1},
+        {"auth": "operator-approval"},
+    ],
+)
+def test_postgres_closing_cannot_change_opening_binding(gate_pg, changes):
+    gate, _, _ = gate_pg
+    claim = new_claim(gate)
+    assessment, at = make_assessment(gate, claim)
+    resolve(gate, claim, assessment, at)
+    opening_intent, _ = gate.read_intent(ACCOUNT, claim.intent_id)
+    if "auth" in changes:
+        changes = {"auth": opening_intent.authorization_id}
+    with pytest.raises(JournalConflict, match="full-close terms"):
+        gate.prepare_closing(ACCOUNT, closing(gate, **changes).id, at=at)
+
+
+@pytest.mark.parametrize("case", ["external", "incomplete", "restriction", "late"])
+def test_postgres_closing_preparation_preserves_account_blockers(gate_pg, case):
+    gate, _, _ = gate_pg
+    claim = new_claim(gate)
+    assessment, at = make_assessment(
+        gate, claim, "external" if case == "external" else "accepted"
+    )
+    resolve(gate, claim, assessment, at)
+    if case == "restriction":
+        restrict(gate, at, revision=1)
+    if case == "incomplete":
+        make_reads(gate, at, "incomplete-refresh", status="INCOMPLETE")
+    if case == "late":
+        gate.record_transaction(
+            uuid4(),
+            claim.intent_id,
+            accepted(provenance=_origin("contradiction", at, 2), outcome="REJECTED"),
+        )
+    with pytest.raises(GateEvidenceError):
+        gate.prepare_closing(ACCOUNT, closing(gate).id, at=at + 8 * SECOND)
+
+
+@pytest.mark.parametrize("competing_action", ["successor", "restriction"])
+def test_postgres_direct_successor_races_are_disabled(gate_pg, competing_action):
+    gate, engine, _ = gate_pg
+    claim = new_claim(gate)
+    assessment, at = make_assessment(gate, claim)
+    resolve(gate, claim, assessment, at)
+    successors = [closing(gate, key=f"successor-{n}") for n in range(2)]
+    with engine.connect() as connection:
+        account = connection.scalar(
+            select(IntentRow.scope_id).where(IntentRow.id == claim.intent_id)
+        )
+    start = Barrier(2, timeout=5)
+
+    def insert_successor(intent):
+        start.wait()
+        with pytest.raises(IntegrityError) as denied, engine.begin() as connection:
+            connection.exec_driver_sql("SET LOCAL lock_timeout = '5s'")
+            identity = uuid4()
+            connection.execute(db_event(account, intent.id, event_id=identity))
+            connection.execute(
+                insert(ClaimRow).values(
+                    id=identity,
+                    scope_id=account,
+                    intent_id=intent.id,
+                    claim_number=2,
+                    claimed_at=at,
+                )
+            )
+        assert denied.value.orig.sqlstate == "23514"
+
+    def add_restriction():
+        start.wait()
+        return restrict(GateJournal(engine), at, revision=1)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(insert_successor, successors[0])
+        second = (
+            pool.submit(insert_successor, successors[1])
+            if competing_action == "successor"
+            else pool.submit(add_restriction)
+        )
+        first.result(timeout=10)
+        restriction = second.result(timeout=10)
+    state = gate.recover_gate(ACCOUNT, at=at)
+    assert state.claims == (claim,)
+    assert (Blocker.OPERATIONAL_RESTRICTION in state.blockers) == bool(restriction)
+    assert all(gate.read_intent(ACCOUNT, intent.id)[1] == () for intent in successors)
+
+
+def test_postgres_populated_0007_upgrade_and_unrepresentable_downgrade(pg_db):  # noqa: F811
+    engine, config = pg_db
+    # Populate via the compatible single-claim writer and existing transition schema.
+    command.upgrade(config, "0007_account_gate")
+    gate = GateJournal(engine)
+    claim = new_claim(gate)
+    assessment, at = make_assessment(gate, claim)
+    # Version 0007's writer and reader have no claim-number column.
+    with engine.begin() as connection:
+        scope = connection.scalar(
+            select(IntentRow.scope_id).where(IntentRow.id == claim.intent_id)
+        )
+        transition_id = uuid4()
+        connection.execute(
+            insert(GateTransitionRow).values(
+                id=transition_id,
+                scope_id=scope,
+                revision=1,
+                previous_revision=0,
+                reason="OPENING_RESOLVED",
+                before_blockers=["CLAIM_UNRESOLVED"],
+                after_blockers=["KNOWN_POSITION"],
+                claim_id=claim.id,
+                intent_id=claim.intent_id,
+                assessment_id=assessment.id,
+                positions_id=assessment.inputs.positions_id,
+                orders_id=assessment.inputs.orders_id,
+                actor=ACTOR,
+                policy="account-gate-v1",
+                decided_at=at,
+                recorded_at=at,
+            )
+        )
+    expected = gate.read_intent(ACCOUNT, claim.intent_id)
+    command.upgrade(config, "head")
+    command.check(config)
+    state = gate.recover_gate(ACCOUNT, at=at)
+    assert state.claims == (claim,)
+    assert state.outstanding_claims == ()
+    assert state.history[0].id == transition_id
+    assert gate.read_intent(ACCOUNT, claim.intent_id) == expected
+    command.downgrade(config, "0007_account_gate")
+    command.upgrade(config, "head")
+    assert gate.recover_gate(ACCOUNT, at=at) == state
+
+    # Model future data using fixture-owner DDL. Normal writers cannot insert it.
+    successor = closing(gate)
+    identity = uuid4()
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "ALTER TABLE execution_claims DISABLE TRIGGER "
+            "broker_claim_successive_admission"
+        )
+        connection.execute(db_event(scope, successor.id, event_id=identity))
+        connection.execute(
+            insert(ClaimRow).values(
+                id=identity,
+                scope_id=scope,
+                intent_id=successor.id,
+                claim_number=2,
+                claimed_at=at,
+            )
+        )
+        connection.exec_driver_sql(
+            "ALTER TABLE execution_claims ENABLE TRIGGER "
+            "broker_claim_successive_admission"
+        )
+    recovered = GateJournal(engine).recover_gate(ACCOUNT, at=at)
+    assert recovered.claims[0] == claim and recovered.latest_claim.id == identity
+    assert recovered.outstanding_claims == (recovered.latest_claim,)
+    assert recovered.history == state.history
+    assert gate.account_hold(ACCOUNT) == claim
+    with pytest.raises(DispatchHeld):
+        gate.claim_dispatch(ACCOUNT, successor.id)
+    with pytest.raises(RuntimeError, match="cannot represent successive claim history"):
+        command.downgrade(config, "0007_account_gate")
+
+
+def test_postgres_0008_refuses_ambiguous_version_0007_accounts(pg_db):  # noqa: F811
+    engine, config = pg_db
+    command.upgrade(config, "0007_account_gate")
+    gate = GateJournal(engine)
+    first = new_claim(gate)
+    other = opening(gate, "legacy-ambiguous")
+    with engine.begin() as connection:
+        account = connection.scalar(
+            select(IntentRow.scope_id).where(IntentRow.id == first.intent_id)
+        )
+        connection.exec_driver_sql(
+            "ALTER TABLE execution_claims DROP CONSTRAINT execution_claims_scope_id_key"
+        )
+        identity = uuid4()
+        connection.execute(db_event(account, other.id, event_id=identity))
+        connection.exec_driver_sql(
+            "INSERT INTO execution_claims (id, scope_id, intent_id, claimed_at) "
+            "VALUES (%s, %s, %s, %s)",
+            (identity, account, other.id, first.claimed_at),
+        )
+    with pytest.raises(DBAPIError, match="Ambiguous version 0007 claim history"):
+        command.upgrade(config, "head")
+    assert "claim_number" not in {
+        column["name"] for column in inspect(engine).get_columns("execution_claims")
+    }
+
+
+def test_postgres_first_close_and_numbered_opening_cannot_bypass_admission(gate_pg):
+    gate, engine, _ = gate_pg
+    proposed_close = closing(gate)
+    with pytest.raises(DispatchHeld):
+        gate.claim_dispatch(ACCOUNT, proposed_close.id)
+    for intent, number in ((proposed_close, 1), (opening(gate), 2)):
+        with pytest.raises(IntegrityError) as denied, engine.begin() as connection:
+            account = connection.scalar(
+                select(IntentRow.scope_id).where(IntentRow.id == intent.id)
+            )
+            identity = uuid4()
+            connection.execute(db_event(account, intent.id, event_id=identity))
+            connection.execute(
+                insert(ClaimRow).values(
+                    id=identity,
+                    scope_id=account,
+                    intent_id=intent.id,
+                    claim_number=number,
+                    claimed_at=datetime.now(UTC),
+                )
+            )
+        assert denied.value.orig.sqlstate == "23514"
+        assert gate.read_intent(ACCOUNT, intent.id)[1] == ()
+    assert gate.claim_history(ACCOUNT) == ()
