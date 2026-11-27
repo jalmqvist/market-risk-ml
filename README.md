@@ -1,14 +1,26 @@
 # MRML
 
-MRML is the execution and risk layer in the BSVE → MSML → MPML → MRML
-research pipeline. The v0 scaffold provides a practice-only OANDA
-market-data client, H1-to-D1 aggregation, a strategy-runner scaffold,
-pure risk gates, daily orchestration, and an operational journal. Its
-OHLCV-only PhaseAware decision boundary is bound to the MPML causal
-runtime (`mpml.runtime.phaseaware.latest_decision`) at
-`ef6b1b84c7393a1bb4dbd6f92a1442115c6cbb57`; `DailyRunner` is not wired
-to it by default. The runtime is a forward-test harness; it has no live-capital
-support and no live state resolver.
+MRML is a minimal, independent trading, risk and operational platform,
+intended to become the execution layer of the BSVE → MSML → MPML → MRML
+research stack. **The current priority is an end-to-end IG Markets demo
+platform that works without MPML or MSML.** First prove one explicit,
+operator-authorized demo opening, independent readback, and separately
+authorized closing. Then complete independent risk controls, the minimal
+terminal workflow and, later, recommendations and forward testing.
+
+**Status (2026-11-27):** bounded IG demo authentication, account/market
+reads and PostgreSQL-backed H1 source ingestion have been operationally
+verified. B0, B1-S1–S4 and B2-S1–S3 established read-only broker-state
+contracts plus PostgreSQL-backed immutable intents, claims, observations,
+opening reconciliation and account-gate recovery. These execution layers
+were verified offline/synthetically, including isolated PostgreSQL tests.
+Nonempty broker transaction responses and actual order opening/closing
+have **not** been operationally verified. There is no IG order-writing
+adapter and no live-capital support. The next steps are B2-S4 pre-execution
+readiness, B3 bounded demo opening and B4 verified demo closing.
+
+[Roadmap](docs/ROADMAP.md) · [Current architecture](docs/ARCHITECTURE.md) ·
+[B2-S3 account-gate audit](docs/audit/MRML_B2_S3_ACCOUNT_GATE_RECOVERY.md)
 
 ## Setup
 
@@ -21,17 +33,17 @@ python -m pip install -r requirements-dev.txt
 cp .env.example .env
 ```
 
-Review `.env` and replace development credentials before starting
-services; set `MRML_DATABASE_URL` to the configured Postgres username,
-password, and database. The `MRML_DATABASE_URL` setting is required when
-calling `load_settings()`. Settings use the `MRML_` prefix; environment
-defaults to `dev`. `live` remains guarded by the explicit
-`MRML_ALLOW_LIVE=true` override, but the daily runtime blocks `live`
-mode regardless. Account mode and OANDA API endpoint must be `practice`.
-Set `MRML_PAIR_UNIVERSE` and provide exactly one
-`MRML_PAIR_COMPOSITIONS` entry per pair before running the baseline.
-Risk limits, evidence policy, and the UTC+1 default bar boundary are
-also configurable.
+Review `.env` without committing or displaying credentials. Set
+`MRML_DATABASE_URL` for PostgreSQL-backed ingestion and execution-journal
+operations. The application settings still contain historical OANDA
+practice-mode and MPML runner configuration; they are not prerequisites
+for the standalone IG demo read-only diagnostics. For IG operations use
+`MRML_IG_ENVIRONMENT=demo` with protected IG credentials. No live IG
+account, broker write or automatic strategy execution is supported.
+The historical `DailyRunner` has its own `MRML_PAIR_UNIVERSE`,
+`MRML_PAIR_COMPOSITIONS`, risk and fixed-boundary settings; see the
+[archived integration record](docs/ROADMAP.md#existing-mpml-integration--implementation-record-2026-11-10)
+when working on that separate path.
 
 ## Tests and checks
 
@@ -44,13 +56,19 @@ mypy src
 
 Synthetic, non-production parquet and JSON fixtures are committed under
 `tests/fixtures/`. Regenerate them with `python tests/make_fixtures.py`.
-Tests need no network or database access.
+The default offline suite makes no credentialed broker requests. Isolated
+PostgreSQL integration tests exercise Alembic migrations, durable execution
+claims, observation replay, gate recovery and concurrency against a real
+PostgreSQL instance; they must be run separately as configured by the tests.
+Do not treat skipped external MPML or PostgreSQL tests as passing evidence.
 
 ## Local Postgres
 
-Postgres is only for local development; no application code connects to
-it in this release. Configure `POSTGRES_DB`, `POSTGRES_USER`, and
-`POSTGRES_PASSWORD` in `.env`, then start and inspect the service:
+PostgreSQL 16 is the active durable store for IG market-data ingestion,
+execution-journal records, broker observations and account-gate history.
+The first IG demo execution has not yet been implemented. Configure
+`POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` in `.env`, then
+start and inspect the local service:
 
 ``` sh
 make db-up
@@ -59,8 +77,8 @@ docker compose down
 ```
 
 The service uses Postgres 16, a named persistent volume, and a readiness
-healthcheck. Apply the operational journal schema after starting the
-database:
+healthcheck. Apply the current Alembic schema (through `0007_account_gate` as of
+2026-11-27) after starting the database:
 
 ``` sh
 alembic upgrade head
@@ -80,7 +98,12 @@ dtypes, duplicate IDs, invalid ranks, broken evaluation references,
 unsupported recommendation metadata schema versions, count mismatches,
 and invalid required evidence dates.
 
-## Runtime baseline
+## Historical OANDA/MPML runtime scaffold (not the current IG demo critical path)
+
+The following implementation record explains reusable earlier code and
+compatibility evidence. The active platform-first delivery sequence is
+in the [roadmap](docs/ROADMAP.md). No MPML recommendation or OANDA
+connection is required for B2-S4, B3 or B4.
 
 `mrml.data.OandaClient` always uses OANDA's practice URL, requests H1
 mid candles, sets a timeout, and retries transient failures. Pass the
@@ -167,7 +190,7 @@ separate H1-to-D1 market-bar parity work.
 -   [ADRs](docs/adr/ADRs.md)
 -   [Changelog](docs/CHANGELOG.md)
 
-## A1: read-only OANDA practice diagnostic
+## Historical A1: read-only OANDA practice diagnostic
 
 A1 checks practice authentication, identifies or validates an account, retrieves
 its summary and available instrument metadata, and validates a small H1 mid-price
@@ -227,6 +250,23 @@ Offline tests verify the workflow with fake sessions and never call OANDA.
 step.** A1 does not establish execution readiness or change daily aggregation.
 A2 should address canonical bar contracts, price components, provenance, and
 availability before broader market-data ingestion.
+
+## Current IG demo read-only and persistence checkpoints
+
+- `python -m mrml.data.ig_probe`: bounded demo account, market and H1
+  bid/ask diagnostics (historical-price allowance applies).
+- `python -m mrml.data.ig_broker_probe`: bounded, read-only broker-state
+  diagnostics and scoped confirmation/individual-position lookups. Nonempty
+  confirmation and position payloads remain unverified against IG.
+- Bounded A3-S3 PostgreSQL IG source ingestion and readback passed in the
+  [acceptance report](docs/audit/IG_A3_S3_ACCEPTANCE_REPORT.md).
+- B2-S1/S2/S3 broker ledger, replay and account-gate tests are offline
+  evidence only; they do not enable writing orders.
+
+No credentialed probe should be run unnecessarily. Before the first demo
+mutation, the B2-S4 safety review must establish complete current exposure,
+dealing rules, risk/margin and operator authorization; B3 and B4 need
+separate explicit approvals.
 
 ## A1-IG demo connectivity diagnostic
 
