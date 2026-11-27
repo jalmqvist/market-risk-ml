@@ -93,6 +93,12 @@ class Position:
     side: str
     quantity: Decimal
     reference: str | None = None
+    status: str | None = None
+    open_level: Decimal | None = None
+    created_date: str | None = None
+    created_date_utc: str | None = None
+    stop_level: Decimal | None = None
+    limit_level: Decimal | None = None
 
 
 @dataclass(frozen=True, repr=False)
@@ -100,6 +106,15 @@ class WorkingOrder:
     deal_id: str
     instrument: str
     reference: str | None = None
+    side: str | None = None
+    quantity: Decimal | None = None
+    status: str | None = None
+    order_type: str | None = None
+    time_in_force: str | None = None
+    order_level: Decimal | None = None
+    created_date: str | None = None
+    created_date_utc: str | None = None
+    good_till_date: str | None = None
 
 
 @dataclass(frozen=True, repr=False)

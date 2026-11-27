@@ -594,6 +594,11 @@ append-only evidence with replay and rollback checks. Broker dispatch and
 hold release remain future implementation stages.
 [Execution journal audit](audit/MRML_B2_S1_EXECUTION_JOURNAL.md)
 
+**B2-S2 — Durable broker observations and replay (implemented, offline verified).**
+Persists account collections, intent-scoped broker facts and versioned
+reconciliation inputs. Replay uses the original clock and evidence, and
+leaves the claim hold in place. [Persisted reconciliation audit](audit/MRML_B2_S2_PERSISTED_RECONCILIATION.md)
+
 Scope:
 
 - Retrieve account positions, working orders, activity/deal history and
