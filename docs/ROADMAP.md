@@ -1,6 +1,5 @@
-# MRML Roadmap (v0.6, 2026-11-19)
-
-> **Current status (2026-11-23):** A1-IG is merged and operationally verified within its read-only scope: the IG demo diagnostic completed authentication, account discovery, explicit EUR/USD instrument validation, and retrieval of 32 H1 bid/ask observations. A2 defines the offline canonical H1 contract and IG adapter. A3-S0 audited IG demo H1 timestamp semantics. A3-S1 adds verified PostgreSQL storage for source revisions and canonical H1 interpretations. A3-S2 implements bounded ingestion and durable recovery with offline and isolated PostgreSQL verification. A3-S3 bounded source-only demo ingestion and PostgreSQL readback passed. Milestone A source-only acceptance evidence is in PR #10 for review. No execution operations were exercised.
+# MRML Roadmap (v0.7, 2026-11-27)
+> **Current status (2026-11-27):** Milestone A's bounded IG demo source-only ingestion and PostgreSQL readback have been operationally verified; canonical mapping, timestamp-policy approval and historical DST semantics remain bounded open issues. B0, B1-S1 through B1-S4, and B2-S1 through B2-S3 are merged. Broker account/position/order reads were verified only with empty collections, while B1-S4 confirmation correlation and B2 execution persistence, replay and gate recovery were tested offline, including isolated PostgreSQL tests. No MRML broker order has been submitted, opened or closed. The next checkpoint is B2-S4 pre-execution readiness, then B3 one controlled IG demo opening and B4 verified closing. MPML integration remains deferred until the independent demo platform is operational.
 
 ## Scope baseline and guiding principle (v0)
 
@@ -447,7 +446,7 @@ are ephemeral and must be managed in memory. There is no live endpoint option
 in v0. A1-IG loads local `.env` values at its CLI boundary, with exported
 environment variables taking precedence.
 
-## Delivery plan: platform first, recommendations second (updated 2026-11-19)
+## Delivery plan: platform first, recommendations second (updated 2026-11-27)
 
 The previous strategy-integration-first sequence remains superseded. The
 critical path is to establish a minimal real **IG demo trading platform**, then
@@ -460,8 +459,10 @@ The repository already contains configuration/contracts, journal schema and
 persistence, risk components, injected orchestration, price-bar transformations,
 a tested MPML causal-runtime adapter, and merged read-only OANDA and IG demo
 adapters. Preserve these. Neither the OANDA adapter nor the MPML runtime is an
-operational dependency of A2/A3. Existing database scaffolding is reusable,
-but production PostgreSQL market-data ingestion has not yet been implemented.
+operational dependency of A2/A3. Existing database scaffolding is reusable; bounded IG demo PostgreSQL
+market-data ingestion and source-only readback have now been verified.
+Execution-journal, observation and account-gate persistence are merged and
+verified offline, but no broker write lifecycle has been exercised.
 
 The MPML runtime binding targets
 `mpml.runtime.phaseaware.latest_decision` at pinned revision
@@ -555,17 +556,18 @@ classification pending that evidence. These limitations bound the accepted
 source-only scope.
 
 **Deliverable:** tested, PostgreSQL-backed IG demo market-data ingestion behind
-MRML's provider boundary. The source-only acceptance evidence is in
-[PR #10](https://github.com/jalmqvist/market-risk-ml/pull/10) for review.
+MRML's provider boundary, accepted for its bounded source-only scope.
+[PR #10](https://github.com/jalmqvist/market-risk-ml/pull/10) retains the source-only
+acceptance evidence; its historical review status is not a current blocker.
 
 ### Milestone B — Position and order lifecycle on IG demo
 
 **Purpose:** demonstrate the complete demo position lifecycle independently
 of any strategy or recommendation provider.
 
-**B0 — Operational journal readiness (started 2026-11-24).** Verify atomic
-run and config snapshot creation on PostgreSQL before broker-state retrieval
-and order management. [B0 audit](audit/OPERATIONAL_JOURNAL_B0.md)
+**B0 — Operational journal readiness (verified 2026-11-24).** Atomic
+run and config snapshot creation on PostgreSQL was verified before broker-state
+retrieval and order management. [B0 audit](audit/OPERATIONAL_JOURNAL_B0.md)
 
 **B1-S1 — Read-only IG demo broker-state contracts (passed 2026-11-24).**
 The implementation and B1-S2 bounded operator verification passed. IG demo
@@ -599,11 +601,47 @@ Persists account collections, intent-scoped broker facts and versioned
 reconciliation inputs. Replay uses the original clock and evidence, and
 leaves the claim hold in place. [Persisted reconciliation audit](audit/MRML_B2_S2_PERSISTED_RECONCILIATION.md)
 
-**B2-S3 — Auditable account gates and restart recovery (offline verified).**
+**B2-S3 — Auditable account gates and restart recovery (merged; offline verified).**
 Records claim-specific uncertainty decisions against replayed evidence and
 recovers account blockers after reconnect. The one-historical-claim limit
 remains in place. Broker verification and action authorization are still
 required. [Account gate audit](audit/MRML_B2_S3_ACCOUNT_GATE_RECOVERY.md)
+
+
+**B2-S4 — Narrow pre-execution safety boundary (next; not yet implemented).**
+Verify the existing read-only broker diagnostics and define the smallest
+execution-specific contract necessary for one operator-authorized IG demo
+opening: exact account/session identity, current complete account exposure,
+dealing-rule and size constraints, risk/margin checks, immutable approved
+request, durable claim and explicit operator authorization. Assess the
+one-claim-per-account limitation and a safe path to closing before enabling
+writes. Prefer bounded local validation and a focused implementation only
+where a specific blocking capability is absent; do not broaden the
+persistence model without an operational need. No live-capital support.
+
+**B3 — First controlled IG demo opening (planned; not authorized).**
+After B2-S4 readiness passes, implement and separately authorize one bounded,
+small demo opening via an explicit terminal command. Commit the intent and
+claim before the single broker mutation, record acknowledgement/confirmation
+separately, perform fresh independent readback, reconcile the exact affected
+position and emit a sanitized audit report. On timeout, unknown reference,
+account mismatch or conflicting evidence: stop, preserve the hold and do not
+retry the write. A test plan and operator approval precede any credentialed
+mutation. B3 does not require MPML or a strategy.
+
+**B4 — Controlled demo closing and lifecycle completion (planned).**
+Implement a separately authorized close of the known demo position, exact
+deal-ID/quantity verification, independent fresh readback, residual-exposure
+assessment, journal reconciliation and restart/uncertain-outcome drills.
+Closing must not be blocked merely by the opening's permanent historical
+claim: review a safe multi-action gate/claim path *before* B3 if the same
+account must perform the close. No automatic replay, blind close or general
+working-order/partial-close machinery is implied.
+
+**Operational checkpoint:** B1/B2 offline tests are prerequisites, not
+evidence of a successfully executed broker lifecycle. No first demo
+opening or closing has been completed. Keep B3 and B4 independently
+observable and independently authorized.
 
 Scope:
 
@@ -636,7 +674,9 @@ Acceptance evidence:
 ### Milestone C — Independent risk and operational safeguards
 
 **Purpose:** ensure MRML controls execution eligibility regardless of the
-provider of a trading instruction.
+provider of a trading instruction. A minimal, specifically reviewed subset
+of these checks is a B2-S4 prerequisite for B3; this milestone completes
+broader safeguards without delaying the bounded proof of concept.
 
 Scope:
 
@@ -737,7 +777,10 @@ recommendation provider. This is not authorization for live-capital trading.
 ### Critical path and explicit non-goals
 
 The critical path remains **A → B → C → D → E → F**, now on IG demo.
-Broker data and operations, risk, and reconciliation precede strategy
+Within B, the next checkpoints are **B2-S4 → B3 → B4**. B2-S4 pulls
+only the minimum necessary execution-specific risk and account checks
+forward from C before B3; C still owns the fuller independent risk
+program. Broker operations, risk and reconciliation precede strategy
 integration. MPML historical parity, full strategy benchmarking and new
 MSML phase research are not prerequisites for the platform PoC.
 
