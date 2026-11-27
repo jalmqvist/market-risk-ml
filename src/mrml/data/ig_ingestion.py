@@ -90,6 +90,9 @@ class IngestionBudget:
             raise ValueError("Invalid IG ingestion budget")
 
 
+_DEFAULT_INGESTION_BUDGET = IngestionBudget()
+
+
 @dataclass(frozen=True)
 class PlannedRequest:
     start: datetime
@@ -171,7 +174,7 @@ class IGIngestion:
         engine: Engine,
         product: SourceProduct,
         *,
-        budget: IngestionBudget = IngestionBudget(),
+        budget: IngestionBudget = _DEFAULT_INGESTION_BUDGET,
         approval: ApprovedTimestampPolicy | None = None,
         sessions: SessionPolicy | None = None,
         clock: Clock = lambda: datetime.now(UTC),
