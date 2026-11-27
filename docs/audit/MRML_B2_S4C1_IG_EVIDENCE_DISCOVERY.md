@@ -3,8 +3,60 @@
 The existing broker-state probe now has an `execution-evidence` command.
 It collects one sanitized report for one explicitly configured demo account
 and EUR/USD EPIC. The new command was verified with deterministic HTTP
-fixtures. **A credentialed C1 capture is pending.** Earlier demo observations
-below describe separate operator runs.
+fixtures. **A bounded credentialed C1 capture succeeded on 2026-11-27.**
+The results below distinguish actual broker observations from offline fixture tests
+and from execution semantics that remain unverified.
+
+
+## Credentialed verification — 2026-11-27
+
+Source: operator-supplied sanitized `ig-demo-execution-evidence-v1` report,
+captured at **2026-11-27 18:15:54–18:15:55 UTC** using the read-only
+`execution-evidence` command. The source report remains outside the
+repository; no raw payload, account ID, balance or session token is recorded
+here. Its `result=observed` means a bounded capture within the specified
+timing window, **not operational dispatch authorization**.
+
+| Dimension | Credentialed observation | Interpretation and limitation |
+| --- | --- | --- |
+| IG session and account | Demo; exact active account matched before and after; `dealing_enabled=enabled`; account `ENABLED`, type `CFD`, currency `SEK` | Confirmed for the short capture; broker expiry unknown, local session generation not a durable proof of authenticity |
+| Balance fields | Balance, available, deposit, profit/loss fields all present | Values intentionally redacted; presence alone does not verify usable initial margin |
+| Exposure | 0 positions; 0 working orders; bounded account-wide collections | Empty at capture time only, not a future flat-account guarantee |
+| Timing | Exposure span 0.127700 s; exposure age 0.185058 s; session age 0.532563 s | Within the 10-second collection span and 30-second freshness windows |
+| Product | `CS.D.EURUSD.CEE.IP`; `CURRENCIES`; expiry `-`; status `TRADEABLE` | One account/product/time observation |
+| Size | `unit=CONTRACTS`; contract size `100000`; lot size `10.0`; `minDealSize.value=0.1`, rule unit `POINTS` | Neither minimum deal-size rule unit nor contract/lot semantics proves an executable increment or exact quantity mapping |
+| Order currency | One listed currency, `USD`, `isDefault=false` | Account currency is SEK; an explicit order-currency selection rule remains to be verified |
+| Order options | `marketOrderPreference=AVAILABLE_DEFAULT_OFF`; force-open, ordinary stops and controlled risk allowed | Availability is not permission to submit; order validation still required |
+| Stop rules | Normal minimum `2.0 POINTS`; controlled-risk minimum `5.0 POINTS`; maximum `75.0 PERCENTAGE`; `minStepDistance=5.0 POINTS` | Point/percentage basis and quote-to-pip mapping still unknown; minStepDistance is not a size increment |
+| Risk premium/slippage | Limited-risk premium missing; slippage factor value `50.0`, unit malformed | Preserve absence/malformed status; do not guess units |
+| Margin | Factor reported as `3.3300000000000000710542735760100185871124267578125 PERCENTAGE`; USD deposit bands: 0–57.8 at 3.33%; 57.8–289 at 3.33%; 289–462.4 at 3.33%; 462.4+ at 15% | Exact tier basis, boundaries, margin arithmetic and USD→SEK conversion remain unverified; the long factor representation should not be silently rounded |
+| Pip/quote | `valueOfOnePip=10.00`; `decimalPlacesFactor=1`; `scalingFactor=1`; `onePipMeans` reported malformed | The parser currently expects a numeric `onePipMeans`, but IG documents this field as **String**; preserve the bounded native text before evaluating its meaning |
+| Precision | Size increment and size precision both unsupported | Explicit blockers for order construction |
+
+**Important distinctions:** The report verifies successful authenticated *read
+operations* during this capture, but it does not persist independently
+authenticated, session-bound provenance to the journal. It does not prove a
+broker-server atomic snapshot or establish risk/margin and operator approval
+for an actual order.
+
+### Follow-up for B2-S4C2
+
+1. Correct the read-only `onePipMeans` parser to preserve bounded native
+   string content rather than marking every nonnumeric value malformed.
+   Do not assume the string's units or expose raw private response data.
+2. Establish documented versus observed semantics for this exact IG EUR/USD
+   product: `CONTRACTS`, `contractSize`, `lotSize`, minimum deal-size
+   `POINTS`, quantity increment/precision, executable price/stop units,
+   `valueOfOnePip`, and order currency. Unsupported details must remain
+   explicit and block normalization.
+3. Establish an independently reviewed, exact-product margin calculation,
+   including band basis, USD-denominated bands and SEK account-currency
+   conversion. Do not normalize the reported 3.330000... factor by rounding.
+4. Address optional/malformed slippage factor unit and the reported
+   `isDefault=false` order-currency flag without inventing defaults.
+5. Keep operational admission and all broker mutation paths disabled.
+   A subsequent credentialed read-only capture is useful only after
+   the mapping/parser has been reviewed.
 
 ## Evidence matrix
 
