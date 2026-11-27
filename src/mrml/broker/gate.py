@@ -26,6 +26,7 @@ from mrml.broker.journal import (
     _canonical,
     _opaque,
 )
+from mrml.broker.journal_models import IntentRow
 from mrml.broker.observation_models import AssessmentRow, ObservationRow
 from mrml.broker.observations import (
     Assessment,
@@ -235,48 +236,53 @@ class GateJournal(ObservationJournal):
         with self._transaction() as session:
             closing = self._scoped_intent(session, scope, closing_intent_id, lock=True)
             state = self._recover(session, scope, closing.scope_id, at)
-            blocking = set(state.blockers) - {
-                Blocker.KNOWN_POSITION,
-                Blocker.IDENTITY_UNVERIFIED,
-            }
-            if blocking:
-                raise GateEvidenceError(min(blocking))
-            claim = state.latest_claim
-            if (
-                len(state.claims) != 1
-                or claim is None
-                or len(state.attributable_positions) != 1
-                or state.positions is None
-                or state.orders is None
-            ):
-                raise GateEvidenceError(Blocker.EXPOSURE_UNVERIFIED)
-            opening = self._scoped_intent(session, scope, claim.intent_id)
-            position = state.attributable_positions[0]
-            if (
-                opening.operation != "OPEN"
-                or closing.operation != "CLOSE"
-                or closing.authorization_id == opening.authorization_id
-                or closing.request.get("target_deal_id") != position.deal_id
-                or closing.request.get("instrument") != position.instrument
-                or (closing.request.get("side"), position.side)
-                not in {("BUY", "SELL"), ("SELL", "BUY")}
-                or closing.quantity != position.quantity
-            ):
-                raise JournalConflict(
-                    "Closing intent does not match scoped full-close terms"
-                )
-            return ClosingPreparation(
-                scope,
-                claim,
-                closing.id,
-                closing.authorization_id,
-                position.deal_id,
-                position.quantity,
-                state.positions.id,
-                state.orders.id,
-                state.revision,
-                at,
+            return self._closing_preparation(session, closing, state, at)
+
+    def _closing_preparation(
+        self, session: Session, closing: IntentRow, state: GateState, at: datetime
+    ) -> ClosingPreparation:
+        blocking = set(state.blockers) - {
+            Blocker.KNOWN_POSITION,
+            Blocker.IDENTITY_UNVERIFIED,
+        }
+        if blocking:
+            raise GateEvidenceError(min(blocking))
+        claim = state.latest_claim
+        if (
+            len(state.claims) != 1
+            or claim is None
+            or len(state.attributable_positions) != 1
+            or state.positions is None
+            or state.orders is None
+        ):
+            raise GateEvidenceError(Blocker.EXPOSURE_UNVERIFIED)
+        opening = self._scoped_intent(session, state.scope, claim.intent_id)
+        position = state.attributable_positions[0]
+        if (
+            opening.operation != "OPEN"
+            or closing.operation != "CLOSE"
+            or closing.authorization_id == opening.authorization_id
+            or closing.request.get("target_deal_id") != position.deal_id
+            or closing.request.get("instrument") != position.instrument
+            or (closing.request.get("side"), position.side)
+            not in {("BUY", "SELL"), ("SELL", "BUY")}
+            or closing.quantity != position.quantity
+        ):
+            raise JournalConflict(
+                "Closing intent does not match scoped full-close terms"
             )
+        return ClosingPreparation(
+            state.scope,
+            claim,
+            closing.id,
+            closing.authorization_id,
+            position.deal_id,
+            position.quantity,
+            state.positions.id,
+            state.orders.id,
+            state.revision,
+            at,
+        )
 
     def restrict(
         self,
