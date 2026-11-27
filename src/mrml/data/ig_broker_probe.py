@@ -5,12 +5,17 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from datetime import datetime
+from dataclasses import asdict
+from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
+from mrml.broker.admission import MAX_COLLECTION_SPAN
+from mrml.broker.gate import MAX_AGE
 from mrml.data.ig import (
     IGClient,
     IGError,
+    IGExecutionCapture,
     IGLookupNotFound,
     validate_activity_window,
     validate_deal_id,
@@ -35,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("accounts", "positions", "working-orders", "confirmation", "position"):
         commands.add_parser(name)
+    commands.add_parser("execution-evidence")
     activity = commands.add_parser("activity")
     activity.add_argument("--from", dest="start", required=True, type=_timestamp)
     activity.add_argument("--to", dest="end", required=True, type=_timestamp)
@@ -44,7 +50,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "activity":
             validate_activity_window(args.start, args.end)
         values = load_probe_values()
-        config = ProbeConfig.from_environ(values, read_epic=False)
+        execution = args.command == "execution-evidence"
+        config = ProbeConfig.from_environ(values, read_epic=execution)
+        if execution:
+            args.epic = config.epic
+            args.account_id = values.get("MRML_IG_EXECUTION_ACCOUNT_ID")
+            if not args.epic:
+                raise ValueError("Set MRML_IG_EPIC")
+            if not args.account_id or not args.account_id.strip():
+                raise ValueError("Set MRML_IG_EXECUTION_ACCOUNT_ID")
         if args.command in {"confirmation", "position"}:
             args.account_id = values.get("MRML_IG_LOOKUP_ACCOUNT_ID")
             args.identifier = values.get("MRML_IG_LOOKUP_IDENTIFIER") or ""
@@ -58,6 +72,19 @@ def main(argv: list[str] | None = None) -> int:
             validator(args.identifier)
         with IGClient(config.api_key, config.username, config.password) as client:
             client.authenticate(bounded=True)
+            if execution:
+                capture = client.discover_execution_evidence(
+                    args.epic, account_id=args.account_id
+                )
+                result, summary = _execution_summary(capture)
+                print(
+                    json.dumps(
+                        {"command": args.command, "result": result, **summary},
+                        default=_evidence_json,
+                    )
+                )
+                return 0 if result == "observed" else 2
+
             summary = _summary(client, args)
     except IGLookupNotFound:
         print(
@@ -78,6 +105,98 @@ def main(argv: list[str] | None = None) -> int:
 
     print(json.dumps({"command": args.command, "result": "pass", **summary}))
     return 0
+
+
+def _evidence_json(value: object) -> str:
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.astimezone(UTC).isoformat()
+    raise TypeError("Unexpected execution evidence type")
+
+
+def _execution_summary(capture: IGExecutionCapture) -> tuple[str, dict[str, Any]]:
+    session = capture.session
+    account = capture.account
+    balances = account.balances
+    clock_ordered = (
+        session.authenticated_at
+        <= capture.market_observed_at
+        <= capture.positions.started_at
+        <= capture.positions.observed_at
+        <= capture.working_orders.started_at
+        <= capture.working_orders.observed_at
+        <= capture.finished_at
+    )
+    span = max(
+        capture.exposure_span_seconds,
+        (
+            capture.working_orders.observed_at - capture.positions.started_at
+        ).total_seconds(),
+    )
+    age = max(
+        capture.exposure_age_seconds,
+        (capture.finished_at - capture.positions.started_at).total_seconds(),
+    )
+    session_age = max(
+        capture.session_age_seconds,
+        (capture.finished_at - session.authenticated_at).total_seconds(),
+    )
+    fresh = (
+        clock_ordered
+        and span <= MAX_COLLECTION_SPAN.total_seconds()
+        and age <= MAX_AGE.total_seconds()
+        and session_age <= MAX_AGE.total_seconds()
+    )
+    dealing_enabled = "missing"
+    if session.dealing_enabled_malformed:
+        dealing_enabled = "malformed"
+    elif session.dealing_enabled is not None:
+        dealing_enabled = "enabled" if session.dealing_enabled else "disabled"
+
+    result = "observed" if fresh else "inconclusive"
+    return result, {
+        "schema": "ig-demo-execution-evidence-v1",
+        "environment": "demo",
+        "session": {
+            "local_generation": str(session.generation),
+            "authenticated_at": session.authenticated_at,
+            "active_account_matched_before_and_after": True,
+            "dealing_enabled": dealing_enabled,
+            "broker_expiry": "unknown",
+            "age_seconds": session_age,
+        },
+        "account": {
+            "status": "ENABLED",
+            "currency": account.currency,
+            "type": (
+                account.account_type
+                if account.account_type in {"CFD", "SPREADBET", "PHYSICAL"}
+                else ("missing" if account.account_type is None else "unsupported")
+            ),
+            "balance_fields": {
+                name: "available"
+                if balances is not None and getattr(balances, name) is not None
+                else "missing"
+                for name in ("balance", "available", "deposit", "profit_loss")
+            },
+        },
+        "exposure": {
+            "positions": {
+                **asdict(capture.positions),
+                "coverage": "bounded_account_wide",
+            },
+            "working_orders": {
+                **asdict(capture.working_orders),
+                "coverage": "bounded_account_wide",
+            },
+            "finished_at": capture.finished_at,
+            "span_seconds": span,
+            "age_seconds": age,
+            "freshness": "within_window" if fresh else "outside_window",
+        },
+        "market": {**asdict(capture.market), "observed_at": capture.market_observed_at},
+    }
 
 
 def _summary(client: IGClient, args: argparse.Namespace) -> dict[str, Any]:
