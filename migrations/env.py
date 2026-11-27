@@ -6,7 +6,10 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from mrml.broker import observation_models
+from mrml.broker import (
+    gate_models,
+    observation_models,  # noqa: F401
+)
 from mrml.data.storage_models import MarketDataBase
 from mrml.journal.models import Base
 
@@ -18,7 +21,7 @@ if database_url := os.environ.get("MRML_DATABASE_URL"):
 target_metadata = [
     Base.metadata,
     MarketDataBase.metadata,
-    observation_models.ExecutionBase.metadata,
+    gate_models.ExecutionBase.metadata,
 ]
 
 

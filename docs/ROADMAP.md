@@ -599,6 +599,12 @@ Persists account collections, intent-scoped broker facts and versioned
 reconciliation inputs. Replay uses the original clock and evidence, and
 leaves the claim hold in place. [Persisted reconciliation audit](audit/MRML_B2_S2_PERSISTED_RECONCILIATION.md)
 
+**B2-S3 — Auditable account gates and restart recovery (offline verified).**
+Records claim-specific uncertainty decisions against replayed evidence and
+recovers account blockers after reconnect. The one-historical-claim limit
+remains in place. Broker verification and action authorization are still
+required. [Account gate audit](audit/MRML_B2_S3_ACCOUNT_GATE_RECOVERY.md)
+
 Scope:
 
 - Retrieve account positions, working orders, activity/deal history and
