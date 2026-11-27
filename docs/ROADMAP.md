@@ -588,6 +588,12 @@ assessment passed offline verification. Credentialed verification of these
 lookups and nonempty broker responses remains pending.
 [Confirmation and correlation audit](audit/IG_B1_S4_CONFIRMATION_CORRELATION.md)
 
+**B2-S1 — Durable execution journal (implemented, PostgreSQL verified).**
+Adds scoped immutable intents, one durable claim and hold per account, and
+append-only evidence with replay and rollback checks. Broker dispatch and
+hold release remain future implementation stages.
+[Execution journal audit](audit/MRML_B2_S1_EXECUTION_JOURNAL.md)
+
 Scope:
 
 - Retrieve account positions, working orders, activity/deal history and

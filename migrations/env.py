@@ -6,6 +6,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from mrml.broker.journal_models import ExecutionBase
 from mrml.data.storage_models import MarketDataBase
 from mrml.journal.models import Base
 
@@ -14,7 +15,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 if database_url := os.environ.get("MRML_DATABASE_URL"):
     config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
-target_metadata = [Base.metadata, MarketDataBase.metadata]
+target_metadata = [Base.metadata, MarketDataBase.metadata, ExecutionBase.metadata]
 
 
 def run_migrations_offline() -> None:
