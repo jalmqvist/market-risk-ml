@@ -451,19 +451,22 @@ class ObservationJournal(ExecutionJournal):
             )
             if row is None:
                 raise ReplayUnavailable("Assessment unavailable in the intended scope")
-            if row.algorithm != OPENING_ALGORITHM:
-                raise ReplayUnavailable("Unsupported assessment algorithm version")
-            stored = self._assessment(session, row)
-            intent = self._scoped_intent(session, scope, row.intent_id)
-            result = self._evaluate(
-                session,
-                scope,
-                intent,
-                stored.inputs,
-                stored.evaluated_at,
-                stored.max_age,
-            )
-            return Replay(stored, result)
+            return self._replay_row(session, scope, row)
+
+    def _replay_row(self, session: Session, scope: Scope, row: AssessmentRow) -> Replay:
+        if row.algorithm != OPENING_ALGORITHM:
+            raise ReplayUnavailable("Unsupported assessment algorithm version")
+        stored = self._assessment(session, row)
+        intent = self._scoped_intent(session, scope, row.intent_id)
+        result = self._evaluate(
+            session,
+            scope,
+            intent,
+            stored.inputs,
+            stored.evaluated_at,
+            stored.max_age,
+        )
+        return Replay(stored, result)
 
     @staticmethod
     def _record(
