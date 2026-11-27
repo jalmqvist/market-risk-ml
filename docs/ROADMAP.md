@@ -1,4 +1,5 @@
 # MRML Roadmap (v0.7, 2026-11-27)
+
 > **Current status (2026-11-27):** Milestone A's bounded IG demo source-only ingestion and PostgreSQL readback have been operationally verified; canonical mapping, timestamp-policy approval and historical DST semantics remain bounded open issues. B0, B1-S1 through B1-S4, and B2-S1 through B2-S3 are merged. Broker account/position/order reads were verified only with empty collections, while B1-S4 confirmation correlation and B2 execution persistence, replay and gate recovery were tested offline, including isolated PostgreSQL tests. No MRML broker order has been submitted, opened or closed. The next checkpoint is B2-S4 pre-execution readiness, then B3 one controlled IG demo opening and B4 verified closing. MPML integration remains deferred until the independent demo platform is operational.
 
 ## Scope baseline and guiding principle (v0)
