@@ -8,16 +8,19 @@ operator-authorized demo opening, independent readback, and separately
 authorized closing. Then complete independent risk controls, the minimal
 terminal workflow and, later, recommendations and forward testing.
 
-**Status (2026-11-27):** bounded IG demo authentication, account/market
-reads and PostgreSQL-backed H1 source ingestion have been operationally
-verified. B0, B1-S1–S4 and B2-S1–S3 established read-only broker-state
-contracts plus PostgreSQL-backed immutable intents, claims, observations,
-opening reconciliation and account-gate recovery. These execution layers
-were verified offline/synthetically, including isolated PostgreSQL tests.
-Nonempty broker transaction responses and actual order opening/closing
-have **not** been operationally verified. There is no IG order-writing
-adapter and no live-capital support. The next steps are B2-S4 pre-execution
-readiness, B3 bounded demo opening and B4 verified demo closing.
+**Status (2026-11-28):** bounded IG demo account/market and exposure reads
+and PostgreSQL-backed H1 source ingestion have been operationally verified.
+B0–B2 provide the tested offline execution-journal, observation, gate,
+reconciliation and pre-execution fixture foundation. B2-S4C1–C3A record
+credentialed EUR/USD product evidence and offline contract/margin arithmetic;
+B2-S4D1 specifies, but does not implement, authenticated operator approval.
+Nonempty broker transaction responses, an IG order-writing adapter, trusted
+admission and actual opening/closing remain **unverified/unimplemented**.
+The first pre-release target is one manual, separately authorized **demo
+OPEN and full CLOSE**, with independent confirmation/readback and durable
+reconciliation. Full portfolio risk, MPML recommendations and DL integration
+are later milestones; minimum broker safety checks remain prerequisites.
+See [prototype readiness](docs/audit/MRML_IG_DEMO_PRERELEASE_READINESS_20261128.md).
 
 [Roadmap](docs/ROADMAP.md) · [Current architecture](docs/ARCHITECTURE.md) ·
 [B2-S3 account-gate audit](docs/audit/MRML_B2_S3_ACCOUNT_GATE_RECOVERY.md)
@@ -77,8 +80,8 @@ docker compose down
 ```
 
 The service uses Postgres 16, a named persistent volume, and a readiness
-healthcheck. Apply the current Alembic schema (through `0007_account_gate` as of
-2026-11-27) after starting the database:
+healthcheck. Apply the current Alembic schema (through `0008_successive_claims` as of
+2026-11-28) after starting the database:
 
 ``` sh
 alembic upgrade head
@@ -256,8 +259,11 @@ availability before broader market-data ingestion.
 - `python -m mrml.data.ig_probe`: bounded demo account, market and H1
   bid/ask diagnostics (historical-price allowance applies).
 - `python -m mrml.data.ig_broker_probe`: bounded, read-only broker-state
-  diagnostics and scoped confirmation/individual-position lookups. Nonempty
-  confirmation and position payloads remain unverified against IG.
+  diagnostics and scoped confirmation/individual-position lookups; its
+  `execution-evidence` subcommand has been run credentialed against the demo
+  account (Nov 27 and 28). The Nov 28 EUR/USD capture returned a native pip
+  label and `EDITS_ONLY` market status. Nonempty confirmation and position
+  payloads remain unverified against IG.
 - Bounded A3-S3 PostgreSQL IG source ingestion and readback passed in the
   [acceptance report](docs/audit/IG_A3_S3_ACCEPTANCE_REPORT.md).
 - B2-S1/S2/S3 broker ledger, replay and account-gate tests are offline
