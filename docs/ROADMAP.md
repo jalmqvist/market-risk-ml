@@ -647,6 +647,13 @@ support.
   controlled-risk differences remain unresolved.
   [Contract reconciliation audit](audit/MRML_B2_S4C3A_CONTRACT_RECONCILIATION.md)
 
+- **B2-S4D1 — Exact-action operator authorization (design recorded for review).**
+  Defines a protected local issuer, separate OPEN and CLOSE approvals,
+  and a future paired consumption/claim transaction. D2 must verify
+  deployment-specific authentication and issuer isolation. Operational
+  issuance, consumption and broker dispatch remain deferred.
+  [Operator authorization design](audit/MRML_B2_S4D1_OPERATOR_AUTHORIZATION_DESIGN.md)
+
 **B3 — First controlled IG demo opening (planned; not authorized).**
 After B2-S4 readiness passes, implement and separately authorize one bounded,
 small demo opening via an explicit terminal command. Commit the intent and
