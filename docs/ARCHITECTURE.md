@@ -1,4 +1,4 @@
-# MRML Architecture (v0.4 platform-first, 2026-11-27)
+# MRML Architecture (v0.4 platform-first, status updated 2026-11-28)
 
 This document describes the current IG demo platform-first architecture.
 [The roadmap](ROADMAP.md) governs delivery status and acceptance; the
@@ -50,7 +50,7 @@ reviewed IG dealing/risk constraints, records immutable intent and an atomic
 dispatch claim, performs at most one separately authorized broker mutation,
 then records acknowledgement, confirmation, independent readback and
 reconciliation. Broker writes are **not implemented or authorized** as of
-2026-11-27.
+2026-11-28.
 
 **Later — recommendation-driven daily cycle:** MPML produces frozen research
 recommendations (slow/offline) and the pinned causal strategy runtime can
@@ -80,9 +80,11 @@ execution path.
 - **Broker observations (B2-S2):** immutable account-wide position and
   working-order collections; intent-specific transaction evidence and
   versioned opening correlation with exact replay after restart.
-- **Account gates (B2-S3):** append-only gate transitions, offline claim
+- **Account gates (B2-S3/S4A):** append-only gate transitions, offline claim
   uncertainty resolution, operational restrictions and conservative
-  recovery. One historical claim per account is still enforced.
+  recovery. Revision `0008_successive_claims` supports ordered historical
+  claim representation, but the database still refuses successor/CLOSE
+  claims on the operational path.
 - **Risk:** existing independent pure-risk scaffold; IG-specific order
   size, currency, dealing rules, available funds/margin and exact operator
   authorization remain to be integrated before an order.
@@ -95,7 +97,7 @@ execution path.
 Milestone A's bounded source-only IG demo ingestion has passed operational
 readback; nonempty confirmation/position payloads and a complete position
 lifecycle remain unverified. The current schema head is
-`0007_account_gate`. See [B1-S3 lifecycle](design/IG_B1_S3_BROKER_LIFECYCLE.md),
+`0008_successive_claims`. See [B1-S3 lifecycle](design/IG_B1_S3_BROKER_LIFECYCLE.md),
 [B2-S3 audit](audit/MRML_B2_S3_ACCOUNT_GATE_RECOVERY.md) and
 [Milestone B](ROADMAP.md#milestone-b--position-and-order-lifecycle-on-ig-demo).
 
@@ -213,9 +215,12 @@ write. Broker reads collected separately do not form an atomic snapshot.
    halt on unknown, mismatched or unreplayable outcomes.
 7. Report status without credentials or raw sensitive account IDs.
 
-Before this workflow can run, B2-S4 must review necessary risk/authorization
-integration and the account's one-historical-claim restriction, including a
-safe route from opening to separately authorized closing. See B3/B4 in the
+Before this workflow can run, B2-S4 must implement authenticated operator
+issuance, trusted account/session/risk evidence and atomic approval consumption
+with claim admission. The current one-operational-claim restriction also needs
+a safe, separately authorized full-close route. B2-S4C1–C3A have verified
+read-only product evidence and offline contract arithmetic; D1 records the
+operator-authorization design but does not implement an issuer. See B3/B4 in the
 roadmap. No write operation has yet been implemented or exercised.
 
 ## 7. Risk boundary and staged acceptance
@@ -264,14 +269,17 @@ evaluation or independently rank strategies.
 
 ## 10. Delivery and rollout (current)
 
-The authoritative critical path is **A → B → C → D → E → F**.
-A's bounded IG source-only data ingestion is accepted. B0, B1-S1–S4
-and B2-S1–S3 established the read-only and offline persistence foundation.
-Next: B2-S4 narrow pre-execution gate, B3 single authorized demo opening,
-B4 independently authorized closing/reconciliation. Limited necessary C
-risk controls are prerequisites of B3; comprehensive C and the simple
-terminal PoC (D) follow. MPML recommendation integration (E) and
-integrated demo forward test (F) remain later.
+The first **pre-release** acceptance target is one manual IG demo OPEN,
+independently verified and then separately authorized full CLOSE, with durable
+journal reconciliation and restart-safe uncertainty handling. A's bounded
+IG source-only ingestion is accepted; B0–B2 established read-only and offline
+persistence/validation, and B2-S4C1–C3A plus D1 have advanced contract and
+authorization design. Remaining critical work includes native product-unit
+verification, authenticated approval, trusted admission/one-shot transport,
+and the safe opening-to-closing transition. Minimum per-order safety checks
+precede B3; broader C risk controls, MPML recommendations (E) and integrated
+forward testing (F) are deferred. See
+[pre-release readiness](audit/MRML_IG_DEMO_PRERELEASE_READINESS_20261128.md).
 
 Old OANDA-first and MPML-first rollout descriptions in the archived
 roadmap and earlier ADRs are historical, not operational instructions.
