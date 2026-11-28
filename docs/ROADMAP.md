@@ -639,6 +639,14 @@ support.
   remains disabled.
   [Execution unit semantics audit](audit/MRML_B2_S4C2_EXECUTION_UNIT_SEMANTICS.md)
 
+- **B2-S4C3A — EUR/USD contract reconciliation (offline arithmetic complete).**
+  Records the demo web ticket and API evidence and checks USD pip and
+  supplied-input margin algebra. A non-submitting ticket check still needs to
+  verify executable quantity increments, native quote and stop units, current
+  dealing status, and SEK initial-margin treatment. Cross-surface stop and
+  controlled-risk differences remain unresolved.
+  [Contract reconciliation audit](audit/MRML_B2_S4C3A_CONTRACT_RECONCILIATION.md)
+
 **B3 — First controlled IG demo opening (planned; not authorized).**
 After B2-S4 readiness passes, implement and separately authorize one bounded,
 small demo opening via an explicit terminal command. Commit the intent and
