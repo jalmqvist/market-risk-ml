@@ -1,6 +1,6 @@
-# MRML Roadmap (v0.7, 2026-11-27)
+# MRML Roadmap (v0.8, status updated 2026-11-28)
 
-> **Current status (2026-11-27):** Milestone A's bounded IG demo source-only ingestion and PostgreSQL readback have been operationally verified; canonical mapping, timestamp-policy approval and historical DST semantics remain bounded open issues. B0, B1-S1 through B1-S4, and B2-S1 through B2-S3 are merged. Broker account/position/order reads were verified only with empty collections, while B1-S4 confirmation correlation and B2 execution persistence, replay and gate recovery were tested offline, including isolated PostgreSQL tests. No MRML broker order has been submitted, opened or closed. The next checkpoint is B2-S4 pre-execution readiness, then B3 one controlled IG demo opening and B4 verified closing. MPML integration remains deferred until the independent demo platform is operational.
+> **Current status (2026-11-28):** Milestone A's bounded IG demo source-only ingestion and PostgreSQL readback are verified. B0–B2 establish the read-only and offline persistence/gate/reconciliation foundation. B2-S4C1–C3A record credentialed EUR/USD product evidence and offline contract arithmetic; D1 records a proposed operator-authorization architecture, not an operational issuer. No MRML broker order has been opened or closed. Native executable size/stop/quote rules, account-currency margin calculation, authenticated operator issuance, trusted transactional admission, one-shot broker transport and safe successive full-close admission remain incomplete. The **first pre-release** is a manual, demo-only OPEN → verified readback → independently authorized full CLOSE → final reconciliation. Comprehensive portfolio risk, MPML recommendations and DL integration are later. [Pre-release readiness](audit/MRML_IG_DEMO_PRERELEASE_READINESS_20261128.md).
 
 ## Scope baseline and guiding principle (v0)
 
@@ -447,7 +447,7 @@ are ephemeral and must be managed in memory. There is no live endpoint option
 in v0. A1-IG loads local `.env` values at its CLI boundary, with exported
 environment variables taking precedence.
 
-## Delivery plan: platform first, recommendations second (updated 2026-11-27)
+## Delivery plan: manual demo prototype first (updated 2026-11-28)
 
 The previous strategy-integration-first sequence remains superseded. The
 critical path is to establish a minimal real **IG demo trading platform**, then
@@ -609,7 +609,7 @@ remains in place. Broker verification and action authorization are still
 required. [Account gate audit](audit/MRML_B2_S3_ACCOUNT_GATE_RECOVERY.md)
 
 
-**B2-S4 — Narrow pre-execution safety boundary (in progress).**
+**B2-S4 — Minimum safe pre-execution boundary for the demo prototype (in progress).**
 Verify the existing read-only broker diagnostics and define the smallest
 execution-specific contract necessary for one operator-authorized IG demo
 opening: exact account/session identity, current complete account exposure,
@@ -647,12 +647,35 @@ support.
   controlled-risk differences remain unresolved.
   [Contract reconciliation audit](audit/MRML_B2_S4C3A_CONTRACT_RECONCILIATION.md)
 
-- **B2-S4D1 — Exact-action operator authorization (design recorded for review).**
+- **B2-S4D1 — Exact-action operator authorization (design merged; not implemented).**
   Defines a protected local issuer, separate OPEN and CLOSE approvals,
   and a future paired consumption/claim transaction. D2 must verify
   deployment-specific authentication and issuer isolation. Operational
   issuance, consumption and broker dispatch remain deferred.
   [Operator authorization design](audit/MRML_B2_S4D1_OPERATOR_AUTHORIZATION_DESIGN.md)
+
+**Prototype v0.1 pre-release gate (manual IG demo lifecycle).** The first
+working pre-release requires: (1) reviewed native EUR/USD trade size and
+protective-stop/quote semantics, verified available margin in SEK and fresh
+account-wide exposure; (2) independently authenticated, single-use exact OPEN
+approval and atomic durable admission; (3) one-shot demo-only broker write
+with independent confirmation and readback; (4) separately approved full CLOSE
+of the confirmed position, admitted safely despite the immutable opening
+history; and (5) reconciliation and fail-closed restart/unknown-outcome
+behavior with a small terminal operator workflow. **A successful opening alone
+is an integration checkpoint, not a working pre-release.** No MPML or MSML
+provider, automatic strategy, broad portfolio optimization, GUI or live account
+is required. Preserve a minimal per-order size, stop, funds/margin and
+duplicate-exposure gate even though comprehensive risk management is deferred.
+[Readiness inventory and acceptance sequence](audit/MRML_IG_DEMO_PRERELEASE_READINESS_20261128.md).
+
+**Next bounded steps:** C3B non-submitting ticket verification when tradeable;
+D2A local operator issuer/PAM and database privilege feasibility; then D2B
+protected approval issuance, trusted broker acquisition and atomic
+authorization/claim admission, one-shot opening, and verified separate close.
+D2A and C3B can proceed independently. Do not equate issuer design, offline
+`ADMISSIBLE` fixtures, or historical preparatory claims with execution
+authority.
 
 **B3 — First controlled IG demo opening (planned; not authorized).**
 After B2-S4 readiness passes, implement and separately authorize one bounded,
@@ -811,12 +834,7 @@ recommendation provider. This is not authorization for live-capital trading.
 
 ### Critical path and explicit non-goals
 
-The critical path remains **A → B → C → D → E → F**, now on IG demo.
-Within B, the next checkpoints are **B2-S4 → B3 → B4**. B2-S4 pulls
-only the minimum necessary execution-specific risk and account checks
-forward from C before B3; C still owns the fuller independent risk
-program. Broker operations, risk and reconciliation precede strategy
-integration. MPML historical parity, full strategy benchmarking and new
+The **first pre-release** critical path is **bounded A foundation → B2-S4 → B3 → B4 → minimal D terminal verification**. The execution-specific subset of C (correct size, stop, funds/margin, account scope, fresh exposure, single-use approval and duplicate protection) is mandatory before B3, while comprehensive C follows the manual platform prototype. The broader platform/research evolution remains A → B → C → D → E → F, but its exhaustive C program is **not** a gate for the first manual demo lifecycle. Broker operations and reconciliation precede strategy integration. MPML historical parity, full strategy benchmarking and new
 MSML phase research are not prerequisites for the platform PoC.
 
 Outside initial scope:
